@@ -1,0 +1,31 @@
+# Build output
+bin/
+build/bin/
+*.exe
+*.msix
+*.dmg
+*.AppImage
+
+# Go
+*.test
+*.out
+
+# Local scratch data (never commit real password databases)
+local/
+*.kdbx
+*.keyx
+!testdata/reference/*.kdbx
+!testdata/**/*.kdbx
+
+# IDE / OS
+.idea/
+.vscode/
+Thumbs.db
+.DS_Store
+/testdata/
+/testdata/reference/
+/.task/
+/Taskfile.yml
+/build/windows/wails.exe.manifest
+/build/darwin/.gitkeep
+/rsrc_windows_amd64.syso

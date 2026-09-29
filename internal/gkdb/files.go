@@ -1,0 +1,34 @@
+package gkdb
+
+import (
+	"os"
+	"path/filepath"
+)
+
+func readFile(path string) ([]byte, error) {
+	return os.ReadFile(path)
+}
+
+// writeFileAtomic writes through a temporary file so an interrupted save never destroys
+// the original database.
+func writeFileAtomic(path string, data []byte) error {
+	dir := filepath.Dir(path)
+	tmp, err := os.CreateTemp(dir, ".gokeep-*.tmp")
+	if err != nil {
+		return err
+	}
+	name := tmp.Name()
+	defer os.Remove(name)
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(name, path)
+}
