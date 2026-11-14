@@ -981,7 +981,7 @@ func captionAbove(t *testing.T, driver *app.Driver, caption string) {
 
 // TestTheTitleStripShowsOnlyTheDatabase covers the strip the window buttons sit in. It
 // used to carry the tagline and the version beside the file's name, "用 Go 编写的密码管理
-// 器 1.0.0": the strip names the database, and the application tells its own name and
+// 器 0.1.0": the strip names the database, and the application tells its own name and
 // version in the About dialog.
 func TestTheTitleStripShowsOnlyTheDatabase(t *testing.T) {
 	driver, model := newTestPage(t, "zh-CN")

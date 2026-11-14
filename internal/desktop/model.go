@@ -46,7 +46,7 @@ type confirmState struct {
 type Model struct {
 	sess *Session
 	// product is the name and version every piece of chrome shows, so the title strip and
-	// the status bar read alike: GoKeep 1.0.0.
+	// the status bar read alike: GoKeep 0.1.0.
 	product string
 	theme   gfx.Theme
 

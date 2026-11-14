@@ -1,7 +1,7 @@
 [app]
 name = "GoKeep"
 id = "dev.gokeep.app"
-version = "1.0.0"
+version = "0.1.0"
 executable = "GoKeep"
 package = "."
 # 1024x1024 PNG: viva build turns it into the .exe icon and the window icon.
@@ -19,4 +19,6 @@ publisher = "GoKeep"
 [linux]
 category = "Utility"
 comment = "Password manager with its own encrypted database format"
+maintainer = "oyzy <oyzy@users.noreply.github.com>"
+homepage = "https://github.com/oyzy/go-pw"
 keywords = ["password", "manager", "vault", "encryption"]
