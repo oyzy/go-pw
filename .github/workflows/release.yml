@@ -26,19 +26,6 @@ jobs:
       - name: Check out the repository
         uses: actions/checkout@v4
 
-      - name: Verify signing credentials
-        run: |
-          missing=()
-          for name in APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID; do
-            if [ -z "${!name:-}" ]; then
-              missing+=("$name")
-            fi
-          done
-          if [ ${#missing[@]} -ne 0 ]; then
-            echo "Missing signing secrets: ${missing[*]}" >&2
-            exit 1
-          fi
-
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
@@ -53,13 +40,17 @@ jobs:
 
       - name: Package
         run: |
-          go run github.com/vivaui/viva/cmd/viva package \
-            --target darwin \
-            --arch arm64 \
-            --format zip,dmg \
-            --notarize
+          args=(package --target darwin --arch arm64 --format zip,dmg)
+          if [ -n "${APPLE_CERTIFICATE:-}" ] && [ -n "${APPLE_CERTIFICATE_PASSWORD:-}" ] &&
+             [ -n "${APPLE_ID:-}" ] && [ -n "${APPLE_PASSWORD:-}" ] && [ -n "${APPLE_TEAM_ID:-}" ]; then
+            args+=(--notarize)
+          else
+            echo "::warning::Apple signing credentials are incomplete; publishing an unsigned macOS build"
+          fi
+          go run github.com/vivaui/viva/cmd/viva "${args[@]}"
 
-      - name: Verify signed and notarized packages
+      - name: Verify signed packages when available
+        if: ${{ env.APPLE_CERTIFICATE != '' }}
         run: |
           zip="$(find bin -maxdepth 1 -name '*-darwin-arm64.zip' -print -quit)"
           test -n "$zip"
@@ -68,10 +59,14 @@ jobs:
           app="$(find "$scratch" -maxdepth 2 -name '*.app' -print -quit)"
           test -n "$app"
           codesign --verify --deep --strict --verbose=2 "$app"
-          xcrun stapler validate "$app"
           dmg="$(find bin -maxdepth 1 -name '*-darwin-arm64.dmg' -print -quit)"
           test -n "$dmg"
-          xcrun stapler validate "$dmg"
+          if [ -n "${APPLE_ID:-}" ] && [ -n "${APPLE_PASSWORD:-}" ] && [ -n "${APPLE_TEAM_ID:-}" ]; then
+            xcrun stapler validate "$app"
+            xcrun stapler validate "$dmg"
+          else
+            echo "::warning::The macOS build is signed but was not notarized"
+          fi
 
       - name: Upload packages
         uses: actions/upload-artifact@v4
@@ -94,14 +89,17 @@ jobs:
       - name: Check out the repository
         uses: actions/checkout@v4
 
-      - name: Verify signing credentials
+      - name: Check Windows signing mode
         shell: pwsh
         run: |
           if ($env:WINDOWS_CERTIFICATE -and $env:WINDOWS_SIGN_COMMAND) {
             throw "Set either WINDOWS_CERTIFICATE or WINDOWS_SIGN_COMMAND, not both"
           }
-          if (-not $env:WINDOWS_SIGN_COMMAND -and (-not $env:WINDOWS_CERTIFICATE -or -not $env:WINDOWS_CERTIFICATE_PASSWORD)) {
-            throw "Missing Windows signing secrets: set WINDOWS_CERTIFICATE and WINDOWS_CERTIFICATE_PASSWORD, or WINDOWS_SIGN_COMMAND"
+          if ($env:WINDOWS_CERTIFICATE -and -not $env:WINDOWS_CERTIFICATE_PASSWORD) {
+            throw "WINDOWS_CERTIFICATE is set without WINDOWS_CERTIFICATE_PASSWORD"
+          }
+          if (-not $env.WINDOWS_SIGN_COMMAND -and -not $env.WINDOWS_CERTIFICATE) {
+            Write-Output "::warning::Windows signing credentials are missing; publishing unsigned Windows packages"
           }
 
       - name: Set up Go
@@ -136,6 +134,7 @@ jobs:
           --format nsis,zip
 
       - name: Verify Authenticode signatures
+        if: ${{ env.WINDOWS_SIGN_COMMAND != '' || (env.WINDOWS_CERTIFICATE != '' && env.WINDOWS_CERTIFICATE_PASSWORD != '') }}
         shell: pwsh
         run: |
           $zip = Get-ChildItem bin\*-windows-amd64.zip | Select-Object -First 1

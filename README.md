@@ -153,31 +153,32 @@ go test ./...   # 全部测试
 ## 发布签名
 
 发布由 `.github/workflows/release.yml` 在推送 `v*` 标签时执行。macOS 和 Windows
-必须完成代码签名，缺少凭据或签名校验失败都会终止发布；Linux 包按 Viva 的约定不做
-代码签名。Windows 同时发布 NSIS 安装版和便携 ZIP，自动更新使用 NSIS 安装版。
-发布作业还会生成签名更新 feed（`latest.json`、`latest.json.sig`）。所有发布包都会
-生成 GitHub build provenance，并连同 `SHA256SUMS` 一起上传。
+配置签名凭据时会自动签名并校验；凭据缺失时会发布未签名安装包，并在 Actions 日志中
+给出警告。Linux 包按 Viva 的约定不做代码签名。Windows 同时发布 NSIS 安装版和
+便携 ZIP，自动更新使用 NSIS 安装版。发布作业始终生成签名更新 feed
+（`latest.json`、`latest.json.sig`）。所有发布包都会生成 GitHub build provenance，
+并连同 `SHA256SUMS` 一起上传。
 
 在仓库的 **Settings → Secrets and variables → Actions** 中配置：
 
 | Secret | 用途 |
 | --- | --- |
-| `APPLE_CERTIFICATE` | Developer ID Application 证书和私钥导出的 `.p12`，Base64 编码 |
+| `APPLE_CERTIFICATE` | 可选；Developer ID Application 证书和私钥导出的 `.p12`，Base64 编码 |
 | `APPLE_CERTIFICATE_PASSWORD` | 上述 `.p12` 的密码 |
 | `APPLE_ID` | Apple Developer 账号邮箱 |
 | `APPLE_PASSWORD` | 该账号的 App 专用密码 |
 | `APPLE_TEAM_ID` | Apple Developer Team ID |
 | `APPLE_SIGNING_IDENTITY` | 可选；不填时使用 `.p12` 中的 Developer ID 身份 |
-| `WINDOWS_CERTIFICATE` | 代码签名证书 `.pfx` 的 Base64 编码 |
+| `WINDOWS_CERTIFICATE` | 可选；代码签名证书 `.pfx` 的 Base64 编码 |
 | `WINDOWS_CERTIFICATE_PASSWORD` | 上述 `.pfx` 的密码 |
 | `WINDOWS_TIMESTAMP_URL` | 可选；RFC 3161 时间戳服务，默认使用 DigiCert |
-| `WINDOWS_SIGN_COMMAND` | 使用云签名或硬件密钥时改为提供签名命令，命令用 `{file}` 表示待签文件 |
+| `WINDOWS_SIGN_COMMAND` | 可选；使用云签名或硬件密钥时改为提供签名命令，命令用 `{file}` 表示待签文件 |
 | `UPDATE_SIGNING_KEY` | 更新 feed 的 Ed25519 私钥（`viva update-keygen` 生成文件的内容），只应保存在发布 secret 中 |
 
 `WINDOWS_CERTIFICATE`/`WINDOWS_CERTIFICATE_PASSWORD` 与
-`WINDOWS_SIGN_COMMAND` 只能二选一。工作流会检查 Windows 签名结果、macOS
-`codesign` 签名、`.app`/`.dmg` 的公证票据和更新 feed 的签名密钥，全部通过后才
-创建 GitHub Release。应用内信任的更新公钥在
+`WINDOWS_SIGN_COMMAND` 只能二选一；两者都不配置时发布未签名 Windows 包。Apple
+签名凭据完整时发布经过签名和公证的 macOS 包，否则发布未签名包。工作流始终检查
+更新 feed 的签名密钥，全部通过后才创建 GitHub Release。应用内信任的更新公钥在
 `internal/desktop/updates.go` 的 `updatePublicKey`；轮换私钥时必须同步更新公钥，
 否则旧版本会拒绝新 feed。私钥文件不得提交到仓库。
 

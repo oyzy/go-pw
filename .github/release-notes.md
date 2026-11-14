@@ -1,8 +1,8 @@
 ## GoKeep v0.1.1
 
-GoKeep 0.1.1 聚焦安全加固、可信分发与自动更新。macOS 安装包现在使用 Developer ID
-Application 证书签名并完成 Apple 公证；Windows 安装包使用 Authenticode 签名并带
-RFC 3161 时间戳。发布工作流会在签名缺失或校验失败时停止，不再发布未签名安装包。
+GoKeep 0.1.1 聚焦安全加固与自动更新。本次构建不包含 Apple Developer ID 签名、
+公证或 Windows Authenticode 证书签名；安装包仍附带 `SHA256SUMS` 和 GitHub build
+provenance，可供完整性校验。更新 feed 始终使用 Ed25519 签名。
 
 ### 安全与可靠性
 
@@ -13,6 +13,8 @@ RFC 3161 时间戳。发布工作流会在签名缺失或校验失败时停止�
 - 标题栏新增 GitHub 仓库按钮，可直接打开 `https://github.com/oyzy/go-pw`
 - 启动时自动检查稳定版更新，发现后在后台下载；用户确认后才安装并重启
 - 更新 feed 使用 Ed25519 签名，安装包校验 HTTPS、大小与 SHA-256
+- **本次 macOS 和 Windows 安装包未做代码签名**，系统可能显示 Gatekeeper 或
+  SmartScreen 警告
 - 发布包附带 GitHub 构建来源证明（build provenance）和 `SHA256SUMS`
 
 ### 下载
@@ -25,16 +27,18 @@ RFC 3161 时间戳。发布工作流会在签名缺失或校验失败时停止�
 
 ### 安装
 
-- macOS：打开 `.dmg`，将 GoKeep 拖入“应用程序”文件夹。应用已签名、公证，公证
-  票据已装订，Gatekeeper 可直接验证。
+- macOS：打开 `.dmg`，将 GoKeep 拖入“应用程序”文件夹。本次应用未签名、未公证；
+  如 Gatekeeper 阻止启动，请在 Finder 中右键应用并选择“打开”。
 - Windows：运行 `GoKeep-0.1.1-windows-amd64-setup.exe`。安装版支持自动更新；便携
-  ZIP 解压后可直接运行，但不会自更新。程序已做 Authenticode 签名和时间戳；新
-  证书仍可能需要一段时间积累 SmartScreen 信誉。
+  ZIP 解压后可直接运行，但不会自更新。本次安装包未做 Authenticode 签名；
+  SmartScreen 可能提示“未知发布者”，请核对 `SHA256SUMS` 后选择继续运行。
 - Linux：运行 `sudo apt install ./gokeep_0.1.1_amd64.deb`，或解压 `.tar.gz` 后
   运行其中的安装脚本。`.tar.gz` 便携版支持自动更新，`.deb` 由包管理器升级。
 
 **升级说明：** 这是 GoKeep 的第一个带自动更新器的版本。从更早版本升级时请手动
 安装一次；之后的版本会在启动时检查更新。Windows 自动更新仅适用于 NSIS 安装版。
+未签名的 macOS 构建无法通过自身更新器替换应用，需要手动下载新版本；Windows
+NSIS 和 Linux `.tar.gz` 的更新包仍由签名 feed 与 SHA-256 保护。
 
 发布目录中的 `latest.json` 与 `latest.json.sig` 是更新 feed 及其 Ed25519 签名，
 由发布工作流生成并随 Release 一并上传。
@@ -45,18 +49,12 @@ RFC 3161 时间戳。发布工作流会在签名缺失或校验失败时停止�
 shasum -a 256 -c SHA256SUMS --ignore-missing
 ```
 
-macOS 还可以验证签名和公证票据：
-
-```sh
-codesign --verify --deep --strict --verbose=2 /Applications/GoKeep.app
-xcrun stapler validate /Applications/GoKeep.app
-```
-
-Windows 可以查看 Authenticode 状态：
+Windows 安装包本次没有 Authenticode 签名，可以确认状态并核对文件哈希：
 
 ```powershell
 Get-AuthenticodeSignature .\GoKeep-0.1.1-windows-amd64-setup.exe |
   Format-List Status, StatusMessage, SignerCertificate
+Get-FileHash .\GoKeep-0.1.1-windows-amd64-setup.exe -Algorithm SHA256
 ```
 
 安装了 GitHub CLI 时，可以验证任意发布包的构建来源：
