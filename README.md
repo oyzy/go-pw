@@ -123,6 +123,38 @@ JSON 文档），打开非本格式的文件会直接提示「这不是 GoKeep �
 go test ./...   # 全部测试
 ```
 
+## 发布签名
+
+发布由 `.github/workflows/release.yml` 在推送 `v*` 标签时执行。macOS 和 Windows
+必须完成代码签名，缺少凭据或签名校验失败都会终止发布；Linux 包按 Viva 的约定不做
+代码签名。所有发布包还会生成 GitHub build provenance，并连同 `SHA256SUMS` 一起
+上传。
+
+在仓库的 **Settings → Secrets and variables → Actions** 中配置：
+
+| Secret | 用途 |
+| --- | --- |
+| `APPLE_CERTIFICATE` | Developer ID Application 证书和私钥导出的 `.p12`，Base64 编码 |
+| `APPLE_CERTIFICATE_PASSWORD` | 上述 `.p12` 的密码 |
+| `APPLE_ID` | Apple Developer 账号邮箱 |
+| `APPLE_PASSWORD` | 该账号的 App 专用密码 |
+| `APPLE_TEAM_ID` | Apple Developer Team ID |
+| `APPLE_SIGNING_IDENTITY` | 可选；不填时使用 `.p12` 中的 Developer ID 身份 |
+| `WINDOWS_CERTIFICATE` | 代码签名证书 `.pfx` 的 Base64 编码 |
+| `WINDOWS_CERTIFICATE_PASSWORD` | 上述 `.pfx` 的密码 |
+| `WINDOWS_TIMESTAMP_URL` | 可选；RFC 3161 时间戳服务，默认使用 DigiCert |
+| `WINDOWS_SIGN_COMMAND` | 使用云签名或硬件密钥时改为提供签名命令，命令用 `{file}` 表示待签文件 |
+
+`WINDOWS_CERTIFICATE`/`WINDOWS_CERTIFICATE_PASSWORD` 与
+`WINDOWS_SIGN_COMMAND` 只能二选一。工作流会检查 Windows 签名结果、macOS
+`codesign` 签名和 `.app`/`.dmg` 的公证票据，全部通过后才创建 GitHub Release。
+
+发布后可用 GitHub CLI 验证构建来源：
+
+```powershell
+gh attestation verify .\GoKeep-0.1.1-windows-amd64.zip --repo oyzy/go-pw
+```
+
 ## 项目结构
 
 | 路径 | 说明 |
