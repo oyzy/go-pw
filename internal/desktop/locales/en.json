@@ -8,6 +8,7 @@
     "entries": "Drag to resize the entry list"
   },
   "titlebar": {
+    "github": "Open the GoKeep GitHub repository",
     "minimize": "Minimise",
     "maximize": "Maximise",
     "restore": "Restore",

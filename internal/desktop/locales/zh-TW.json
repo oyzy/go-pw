@@ -8,6 +8,7 @@
     "entries": "拖曳調整項目清單寬度"
   },
   "titlebar": {
+    "github": "開啟 GoKeep 的 GitHub 儲存庫",
     "minimize": "最小化",
     "maximize": "最大化",
     "restore": "還原",

@@ -1211,6 +1211,29 @@ func requireTitleStrip(t *testing.T, driver *app.Driver, model *Model, file stri
 	}
 }
 
+// TestTheGitHubButtonOpensTheRepository pins the repository shortcut to the title strip:
+// it sits before the window buttons and opens the project's GitHub page.
+func TestTheGitHubButtonOpensTheRepository(t *testing.T) {
+	driver, model := newTestPage(t, "en")
+	create(t, model, "master")
+	if err := paint(driver, model); err != nil {
+		t.Fatalf("cannot paint the workspace: %v", err)
+	}
+	snapshot := driver.Snapshot()
+	bounds := widestHitBounds(t, driver, model.t("titlebar.github"))
+	if bounds.Y < 0 || bounds.Y+bounds.Height > titlebarHeight {
+		t.Fatalf("the GitHub button at %+v is outside the title strip", bounds)
+	}
+	_, trailing := app.TitlebarInsets()
+	if bounds.X+bounds.Width > float32(snapshot.Width)-trailing {
+		t.Fatalf("the GitHub button at %+v overlaps the window buttons inset %v", bounds, trailing)
+	}
+	clickLabel(t, driver, model, model.t("titlebar.github"))
+	if opened, ok := driver.LastOpenedURL(); !ok || opened != githubURL {
+		t.Fatalf("the GitHub button opened %q, %t; want %q", opened, ok, githubURL)
+	}
+}
+
 // TestTheDividersResizeThePanes covers the two dividers between the three panes: a drag
 // moves the divider, the pane beside it takes the new width, and the divider stops at the
 // least width instead of letting a pane vanish. The list and the details used to take

@@ -8,6 +8,7 @@
     "entries": "ドラッグして項目一覧の幅を変更"
   },
   "titlebar": {
+    "github": "GoKeep の GitHub リポジトリを開く",
     "minimize": "最小化",
     "maximize": "最大化",
     "restore": "元のサイズに戻す",

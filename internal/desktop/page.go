@@ -122,9 +122,11 @@ func (m *Model) titlebar(c ui.C) {
 	}
 	ui.Row(c).FillWidth().Height(34).Items(ui.Center).
 		Background(m.theme.Card).Border(1, m.theme.Border).
-		PadSides(0, 12+leading, 0, trailing+12).MovesWindow().
+		PadSides(0, trailing+12, 0, leading+12).MovesWindow().
 		Children(func() {
 			ui.Text(c, title).Weight(gfx.WeightSemibold)
+			ui.Spacer(c)
+			m.githubButton(c)
 		})
 }
 
