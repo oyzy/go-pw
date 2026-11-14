@@ -100,6 +100,7 @@ type Model struct {
 	menus   [menuCount]bool
 	toaster ui.Toaster
 
+	update  updateState
 	confirm confirmState
 	editor  editorState
 	group   groupState
@@ -179,6 +180,7 @@ func newModel(sess *Session) *Model {
 	}
 	m.tree.RowHeight = 26
 	m.tree.Indent = 16
+	m.initUpdates(version)
 	return m
 }
 

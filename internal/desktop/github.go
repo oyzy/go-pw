@@ -6,7 +6,10 @@ import (
 	"github.com/vivaui/viva/ui"
 )
 
-const githubURL = "https://github.com/oyzy/go-pw"
+const (
+	githubURL         = "https://github.com/oyzy/go-pw"
+	githubReleasesURL = githubURL + "/releases"
+)
 
 var iconGitHub = gfx.Icon{ViewBox: 24, Commands: []gfx.PathCommand{
 	gfx.MoveTo(12.0, 0.297),

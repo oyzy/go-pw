@@ -116,33 +116,51 @@ jobs:
           node tools/i18n-check.mjs
           go run github.com/vivaui/viva/cmd/viva vet
 
+      - name: Ensure NSIS is available
+        shell: pwsh
+        run: |
+          if (-not (Get-Command makensis -ErrorAction SilentlyContinue)) {
+            choco install nsis --yes --no-progress
+            $nsis = Join-Path ${env:ProgramFiles(x86)} "NSIS"
+            if (-not (Test-Path (Join-Path $nsis "makensis.exe"))) {
+              throw "makensis was not installed"
+            }
+            $nsis | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+          }
+
       - name: Package
         run: >
           go run github.com/vivaui/viva/cmd/viva package
           --target windows
           --arch amd64
-          --format zip
+          --format nsis,zip
 
-      - name: Verify Authenticode signature
+      - name: Verify Authenticode signatures
         shell: pwsh
         run: |
           $zip = Get-ChildItem bin\*-windows-amd64.zip | Select-Object -First 1
           if (-not $zip) { throw "The Windows package was not created" }
+          $setup = Get-ChildItem bin\*-windows-amd64-setup.exe | Select-Object -First 1
+          if (-not $setup) { throw "The Windows installer was not created" }
           $scratch = Join-Path $env:RUNNER_TEMP "signed-windows"
           Expand-Archive -LiteralPath $zip.FullName -DestinationPath $scratch -Force
           $exe = Get-ChildItem $scratch -Recurse -Filter GoKeep.exe | Select-Object -First 1
           if (-not $exe) { throw "GoKeep.exe is missing from the Windows package" }
-          $signature = Get-AuthenticodeSignature -LiteralPath $exe.FullName
-          if ($signature.Status -ne "Valid") {
-            throw "Authenticode verification failed: $($signature.Status) $($signature.StatusMessage)"
+          foreach ($file in @($exe.FullName, $setup.FullName)) {
+            $signature = Get-AuthenticodeSignature -LiteralPath $file
+            if ($signature.Status -ne "Valid") {
+              throw "Authenticode verification failed for $file`: $($signature.Status) $($signature.StatusMessage)"
+            }
+            Write-Output "Authenticode signer for $file`: $($signature.SignerCertificate.Subject)"
           }
-          Write-Output "Authenticode signer: $($signature.SignerCertificate.Subject)"
 
       - name: Upload packages
         uses: actions/upload-artifact@v4
         with:
           name: release-windows
-          path: bin/*-windows-amd64.zip
+          path: |
+            bin/*-windows-amd64-setup.exe
+            bin/*-windows-amd64.zip
           if-no-files-found: error
 
   linux:
@@ -187,12 +205,69 @@ jobs:
             bin/*_amd64.deb
           if-no-files-found: error
 
+  feed:
+    name: Update feed
+    needs:
+      - macos
+      - windows
+      - linux
+    runs-on: ubuntu-latest
+    env:
+      VIVA_UPDATE_KEY: ${{ secrets.UPDATE_SIGNING_KEY }}
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+
+      - name: Verify update signing key
+        run: |
+          if [ -z "${VIVA_UPDATE_KEY:-}" ]; then
+            echo "Missing UPDATE_SIGNING_KEY secret" >&2
+            exit 1
+          fi
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.27.x"
+          cache: true
+
+      - name: Download packages
+        uses: actions/download-artifact@v4
+        with:
+          pattern: release-*
+          path: release-assets
+          merge-multiple: true
+
+      - name: Generate signed update feed
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          go run github.com/vivaui/viva/cmd/viva feed \
+            -version "$version" \
+            -dir release-assets \
+            -base-url "https://github.com/oyzy/go-pw/releases/download/${GITHUB_REF_NAME}" \
+            -channel stable \
+            -notes "https://github.com/oyzy/go-pw/releases/tag/${GITHUB_REF_NAME}" \
+            -out release-assets/latest.json \
+            -valid-for 2160h
+          test -s release-assets/latest.json
+          test -s release-assets/latest.json.sig
+
+      - name: Upload update feed
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-feed
+          path: |
+            release-assets/latest.json
+            release-assets/latest.json.sig
+          if-no-files-found: error
+
   publish:
     name: Publish release
     needs:
       - macos
       - windows
       - linux
+      - feed
     runs-on: ubuntu-latest
     permissions:
       contents: write

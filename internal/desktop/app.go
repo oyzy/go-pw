@@ -73,6 +73,9 @@ func Run(version string, store *config.Store) error {
 		// The clipboard countdown and anything else off the window thread wake the
 		// page through this.
 		session.SetInvalidator(windowConfig.Invalidator)
+		if store.Get().AutoCheckUpdates {
+			model.startUpdateCheck(false)
+		}
 		return nil
 	})
 }

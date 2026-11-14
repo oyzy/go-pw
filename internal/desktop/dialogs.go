@@ -539,6 +539,10 @@ func (m *Model) optionsDialog(c ui.C) {
 				ui.Checkbox(c, &state.cfg.ConfirmDelete, m.t("options.confirmDelete"))
 				ui.Checkbox(c, &state.cfg.ShowRecycleBin, m.t("menu.showRecycleBin"))
 				ui.Divider(c)
+				ui.Text(c, m.t("options.updates")).Bold()
+				ui.Checkbox(c, &state.cfg.AutoCheckUpdates, m.t("options.autoCheckUpdates"))
+				ui.Text(c, m.t("options.autoCheckUpdatesHint")).Muted().FontSize(12)
+				ui.Divider(c)
 				ui.Text(c, m.t("options.theme")).Bold()
 				themes := []string{"dark", "light"}
 				ui.Choice(c, &state.cfg.Theme, themes, m.themeLabel)

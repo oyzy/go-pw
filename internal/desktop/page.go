@@ -13,6 +13,7 @@ import (
 // otherwise the title bar, menu bar, toolbar, the three panes and the status bar.
 func (m *Model) page(c ui.C) {
 	m.pageC = c
+	m.updateEffects(c)
 	ui.Column(c).Fill().Background(m.theme.Background).Children(func() {
 		if !m.sess.Unlocked() {
 			m.lockPage(c)
@@ -100,6 +101,7 @@ func (m *Model) overlays(c ui.C) {
 	m.moveDialog(c)
 	m.searchDialog(c)
 	m.aboutDialog(c)
+	m.updateDialog(c)
 	m.shortcutsDialog(c)
 	m.duplicatesDialog(c)
 	m.expiredDialog(c)
@@ -126,6 +128,11 @@ func (m *Model) titlebar(c ui.C) {
 		Children(func() {
 			ui.Text(c, title).Weight(gfx.WeightSemibold)
 			ui.Spacer(c)
+			if label := m.updateBadgeLabel(); label != "" {
+				if ui.Button(c, label).Ghost().Small().Clicked() {
+					m.update.open = true
+				}
+			}
 			m.githubButton(c)
 		})
 }
@@ -321,6 +328,10 @@ func (m *Model) toolsMenu(c ui.C, items *ui.MenuItems) {
 }
 
 func (m *Model) helpMenu(c ui.C, items *ui.MenuItems) {
+	if items.Item(m.t("menu.checkUpdates")).Disabled(m.update.checking).Clicked() {
+		after(c, m.showOrCheckUpdates)
+	}
+	items.Separator()
 	if items.Item(m.t("menu.shortcuts")).Clicked() {
 		m.shortcutsHelp = true
 	}

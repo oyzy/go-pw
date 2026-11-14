@@ -26,6 +26,7 @@ type Config struct {
 	ConfirmDelete         bool          `json:"confirmDelete"`
 	ShowPasswordsInList   bool          `json:"showPasswordsInList"`
 	ShowRecycleBin        bool          `json:"showRecycleBin"`
+	AutoCheckUpdates      bool          `json:"autoCheckUpdates"`
 	Theme                 string        `json:"theme"`
 	Language              string        `json:"language"`
 	StartMinimized        bool          `json:"startMinimized"`
@@ -43,6 +44,7 @@ func DefaultConfig() Config {
 		BackupCount:           1,
 		ConfirmDelete:         true,
 		ShowRecycleBin:        true,
+		AutoCheckUpdates:      true,
 		Theme:                 "dark",
 		MaxRecentFiles:        10,
 		Generator:             pwgen.DefaultOptions(),

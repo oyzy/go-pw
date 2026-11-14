@@ -53,6 +53,32 @@ node tools/i18n-check.mjs     # 校验各语言 key 是否齐全、占位符是�
 go test ./internal/desktop -run Sentence   # 校验每句文案与调用它的 m.tf 参数一致
 ```
 
+## 自动更新
+
+程序启动时默认检查 GitHub Releases 上的稳定版更新（可在
+**工具 → 选项 → 软件更新**关闭），也可以随时通过 **帮助 → 检查更新**手动检查。
+发现新版本后会在后台下载；下载完成并校验通过后，仍需点击“安装并重启”才会替换
+程序，避免在编辑数据库时自动退出。
+
+更新源为 `https://github.com/oyzy/go-pw/releases/latest/download/latest.json`。
+更新包使用 Viva 自带的安全更新流程：
+
+- `latest.json` 由 Ed25519 私钥签名，应用内只信任编译进去的公钥
+- 安装包必须通过 HTTPS 下载，并匹配 feed 中的大小与 SHA-256
+- macOS 会再次校验 `.app` 的代码签名；Windows 安装器有 Authenticode 签名时会校验
+- 安装失败不会替换现有程序；旧版本会继续运行
+
+支持自动更新的安装形态：
+
+| 平台 | 支持自动更新的包 |
+| --- | --- |
+| Windows | `GoKeep-*-windows-amd64-setup.exe`（NSIS 安装版） |
+| macOS | `.zip` 中的 GoKeep `.app`，且不能位于 App Translocation 路径 |
+| Linux | 可写目录中的 `.tar.gz` 便携版 |
+
+Windows 便携 ZIP、Linux `.deb` 和 AppImage 不会自更新，请通过对应渠道手动升级。
+**从旧版本升级到第一个带更新器的版本时，需要手动安装一次**，之后才能接收自动更新。
+
 ## 界面细节
 
 - **窗口完全自绘**：标题栏、菜单栏、工具栏、状态栏都由 Viva 页面绘制，颜色 100%
@@ -106,6 +132,7 @@ JSON 文档），打开非本格式的文件会直接提示「这不是 GoKeep �
 - 密码强度评估（熵 + 常见弱点惩罚），列表与详情中显示强度
 - 剪贴板：复制密码/用户名/网址，按 KeePass 的方式在 N 秒后自动清空，退出时清空
 - 自动锁定：可配置无操作后自动锁定；锁定后内存中的密钥被清除
+- 自动更新：启动时检查签名更新源，后台下载，确认后安装并重启
 - 保存时自动生成 `.bak` 备份并轮转
 - 导入/导出 CSV（列名与 KeePass 导出格式一致）、数据库整体备份
 - 界面对话框中的中文/Unicode 内容、附件与自定义字段全部按 KeePass 语义处理
@@ -127,8 +154,9 @@ go test ./...   # 全部测试
 
 发布由 `.github/workflows/release.yml` 在推送 `v*` 标签时执行。macOS 和 Windows
 必须完成代码签名，缺少凭据或签名校验失败都会终止发布；Linux 包按 Viva 的约定不做
-代码签名。所有发布包还会生成 GitHub build provenance，并连同 `SHA256SUMS` 一起
-上传。
+代码签名。Windows 同时发布 NSIS 安装版和便携 ZIP，自动更新使用 NSIS 安装版。
+发布作业还会生成签名更新 feed（`latest.json`、`latest.json.sig`）。所有发布包都会
+生成 GitHub build provenance，并连同 `SHA256SUMS` 一起上传。
 
 在仓库的 **Settings → Secrets and variables → Actions** 中配置：
 
@@ -144,15 +172,19 @@ go test ./...   # 全部测试
 | `WINDOWS_CERTIFICATE_PASSWORD` | 上述 `.pfx` 的密码 |
 | `WINDOWS_TIMESTAMP_URL` | 可选；RFC 3161 时间戳服务，默认使用 DigiCert |
 | `WINDOWS_SIGN_COMMAND` | 使用云签名或硬件密钥时改为提供签名命令，命令用 `{file}` 表示待签文件 |
+| `UPDATE_SIGNING_KEY` | 更新 feed 的 Ed25519 私钥（`viva update-keygen` 生成文件的内容），只应保存在发布 secret 中 |
 
 `WINDOWS_CERTIFICATE`/`WINDOWS_CERTIFICATE_PASSWORD` 与
 `WINDOWS_SIGN_COMMAND` 只能二选一。工作流会检查 Windows 签名结果、macOS
-`codesign` 签名和 `.app`/`.dmg` 的公证票据，全部通过后才创建 GitHub Release。
+`codesign` 签名、`.app`/`.dmg` 的公证票据和更新 feed 的签名密钥，全部通过后才
+创建 GitHub Release。应用内信任的更新公钥在
+`internal/desktop/updates.go` 的 `updatePublicKey`；轮换私钥时必须同步更新公钥，
+否则旧版本会拒绝新 feed。私钥文件不得提交到仓库。
 
 发布后可用 GitHub CLI 验证构建来源：
 
 ```powershell
-gh attestation verify .\GoKeep-0.1.1-windows-amd64.zip --repo oyzy/go-pw
+gh attestation verify .\GoKeep-0.1.1-windows-amd64-setup.exe --repo oyzy/go-pw
 ```
 
 ## 项目结构
@@ -165,8 +197,8 @@ gh attestation verify .\GoKeep-0.1.1-windows-amd64.zip --repo oyzy/go-pw
 | `internal/vault` | 打开的数据库会话：分组/条目编辑、历史、回收站、搜索、CSV、设置 |
 | `internal/pwgen` | 密码生成器（字符集与模式） |
 | `internal/pwquality` | 密码强度评估 |
-| `internal/desktop` | Viva 界面：页面与布局、自绘菜单栏、全部对话框、语言包、会话与命令 |
-| `internal/config` | 应用配置：主题、语言、最近文件、自动锁定、剪贴板清空时间 |
+| `internal/desktop` | Viva 界面：页面与布局、自绘菜单栏、全部对话框、语言包、会话、命令与签名更新 |
+| `internal/config` | 应用配置：主题、语言、最近文件、自动锁定、剪贴板清空时间、更新检查开关 |
 | `build/appicon.png` | 图标主图（`viva.toml` 指向它，`viva build` 用它写 exe 资源） |
 
 ## 开发
