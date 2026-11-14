@@ -87,6 +87,21 @@ func TestValidation(t *testing.T) {
 	if _, err := DeriveKey([]byte("x"), bad); err == nil {
 		t.Fatal("version 1.0 must be rejected")
 	}
+	bad = base
+	bad.Memory = MaxMemoryKiB + 1
+	if _, err := DeriveKey([]byte("x"), bad); err == nil {
+		t.Fatal("unbounded memory must be rejected")
+	}
+	bad = base
+	bad.Time = MaxPasses + 1
+	if _, err := DeriveKey([]byte("x"), bad); err == nil {
+		t.Fatal("unbounded passes must be rejected")
+	}
+	bad = base
+	bad.Threads = MaxThreads + 1
+	if _, err := DeriveKey([]byte("x"), bad); err == nil {
+		t.Fatal("unbounded parallelism must be rejected")
+	}
 }
 
 func BenchmarkArgon2dKeePassDefaults(b *testing.B) {

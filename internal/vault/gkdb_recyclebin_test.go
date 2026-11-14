@@ -33,17 +33,17 @@ func TestNativeFormatKeepsRecycleBin(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	bin := again.Database().RecycleBin()
+	bin := again.db.RecycleBin()
 	if bin == nil {
 		t.Fatal("the recycle bin was lost while saving the native format")
 	}
 	if len(bin.Entries) != 1 {
 		t.Fatalf("the recycle bin holds %d entries after reloading", len(bin.Entries))
 	}
-	if !again.Database().Meta.RecycleBinEnabled {
+	if !again.db.Meta.RecycleBinEnabled {
 		t.Error("the recycle bin policy was lost")
 	}
-	binID := idOf(again.Database().Meta.RecycleBinUUID)
+	binID := idOf(again.db.Meta.RecycleBinUUID)
 	for _, group := range again.Tree() {
 		if group.ID == binID {
 			if len(group.EntryIDs) != 1 {

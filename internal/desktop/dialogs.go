@@ -524,6 +524,18 @@ func (m *Model) optionsDialog(c ui.C) {
 					}
 				})
 				ui.Checkbox(c, &state.cfg.ClipboardClearOnExit, m.t("options.clipboardExit"))
+				ui.Divider(c)
+				ui.Text(c, m.t("options.autoLock")).Bold()
+				ui.Row(c).Gap(8).Items(ui.Center).Children(func() {
+					ui.Text(c, m.tf("options.autoLockSeconds", "seconds", state.cfg.AutoLockSeconds)).Muted().FontSize(12)
+					if ui.Button(c, "−").Outline().XSmall().Clicked() {
+						state.cfg.AutoLockSeconds = clampAutoLockSeconds(state.cfg.AutoLockSeconds - autoLockStep)
+					}
+					if ui.Button(c, "+").Outline().XSmall().Clicked() {
+						state.cfg.AutoLockSeconds = clampAutoLockSeconds(state.cfg.AutoLockSeconds + autoLockStep)
+					}
+				})
+				ui.Checkbox(c, &state.cfg.LockOnMinimize, m.t("options.lockOnMinimize"))
 				ui.Checkbox(c, &state.cfg.ConfirmDelete, m.t("options.confirmDelete"))
 				ui.Checkbox(c, &state.cfg.ShowRecycleBin, m.t("menu.showRecycleBin"))
 				ui.Divider(c)
@@ -586,6 +598,7 @@ func (m *Model) saveOptions() error {
 	m.sess.Tr().SetLanguage(cfg.Language)
 	m.applyTheme()
 	m.reload()
+	m.sess.ResetAutoLock()
 	return nil
 }
 

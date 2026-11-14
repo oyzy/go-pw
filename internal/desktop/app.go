@@ -51,10 +51,19 @@ func Run(version string, store *config.Store) error {
 			Icon:           windowIcon(),
 			ClearColor:     appColor(model.theme.Background),
 			OnCloseRequest: model.handleCloseRequest,
+			OnWake:         model.wake,
+			OnActivate:     model.windowActivate,
+			OnMinimize:     model.windowMinimize,
 			// A divider keeps its arrow keys in its own state, so the window hands it the
 			// key events the page's shortcuts do not take.
 			OnKey: model.splitKey,
 		})
+		// The page's routes handle most input themselves, so activity is recorded
+		// around the configured handlers rather than in a fallback behind them.
+		windowConfig.OnKey = model.trackKey(windowConfig.OnKey)
+		windowConfig.OnPointer = model.trackPointer(windowConfig.OnPointer)
+		windowConfig.OnShortcut = model.trackShortcut(windowConfig.OnShortcut)
+		windowConfig.OnScroll = model.trackScroll(windowConfig.OnScroll)
 		window, err := application.OpenWindow(windowConfig, nil)
 		if err != nil {
 			return err

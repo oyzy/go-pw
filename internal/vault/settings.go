@@ -125,7 +125,11 @@ func (v *Vault) applySecuritySettings(s DatabaseSettings) {
 	case "AES-KDF":
 		p := dbdoc.NewKDFParams(dbdoc.KDFAES)
 		p.Dict.SetBytes(dbdoc.KdfParamSeed, randomBytes(32))
-		p.Dict.SetUint64(dbdoc.KdfParamRounds, maxU64(s.KDFRounds, 60000))
+		rounds := maxU64(s.KDFRounds, 60000)
+		if rounds > dbdoc.MaxAESKDFRounds {
+			rounds = dbdoc.MaxAESKDFRounds
+		}
+		p.Dict.SetUint64(dbdoc.KdfParamRounds, rounds)
 		v.settings.KDF = p
 	case "Argon2d":
 		v.settings.KDF = newArgon2Params(dbdoc.KDFArgon2d, s)
@@ -138,9 +142,21 @@ func (v *Vault) applySecuritySettings(s DatabaseSettings) {
 func newArgon2Params(uuid dbdoc.UUID, s DatabaseSettings) *dbdoc.KDFParams {
 	p := dbdoc.NewKDFParams(uuid)
 	p.Dict.SetBytes(dbdoc.KdfParamSeed, randomBytes(32))
-	p.Dict.SetUint32(dbdoc.KdfParamParallelism, maxU32(s.KDFParallelism, 1))
-	p.Dict.SetUint64(dbdoc.KdfParamMemory, maxU64(s.KDFMemory, 8*1024*1024))
-	p.Dict.SetUint64(dbdoc.KdfParamIterations, maxU64(s.KDFIterations, 1))
+	parallelism := maxU32(s.KDFParallelism, 1)
+	if parallelism > dbdoc.MaxArgon2Parallelism {
+		parallelism = dbdoc.MaxArgon2Parallelism
+	}
+	memory := maxU64(s.KDFMemory, 8*1024*1024)
+	if memory > dbdoc.MaxArgon2Memory {
+		memory = dbdoc.MaxArgon2Memory
+	}
+	iterations := maxU64(s.KDFIterations, 1)
+	if iterations > dbdoc.MaxArgon2Iterations {
+		iterations = dbdoc.MaxArgon2Iterations
+	}
+	p.Dict.SetUint32(dbdoc.KdfParamParallelism, parallelism)
+	p.Dict.SetUint64(dbdoc.KdfParamMemory, memory)
+	p.Dict.SetUint64(dbdoc.KdfParamIterations, iterations)
 	p.Dict.SetUint32(dbdoc.KdfParamVersion, 0x13)
 	return p
 }

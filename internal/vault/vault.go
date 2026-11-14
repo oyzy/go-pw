@@ -314,10 +314,12 @@ func (v *Vault) Save() error {
 func (v *Vault) SaveAs(path string, key dbdoc.Key) error {
 	v.mu.Lock()
 	defer v.mu.Unlock()
+	oldKey := v.key
 	if key.Password != "" || len(key.KeyFile) > 0 {
 		v.key = key
 	}
 	if err := v.saveLocked(path); err != nil {
+		v.key = oldKey
 		return err
 	}
 	v.path = path
@@ -369,21 +371,18 @@ func (v *Vault) ChangeKey(newKey dbdoc.Key) error {
 		return ErrLocked
 	}
 	oldKey := v.key
+	oldChanged := v.db.Meta.MasterKeyChanged
+	oldDirty := v.dirty
 	v.key = newKey
-	if err := v.saveLocked(v.path); err != nil {
-		v.key = oldKey
-		return err
-	}
 	v.db.Meta.MasterKeyChanged = time.Now().UTC().Truncate(time.Second)
 	v.dirty = true
-	return v.saveLocked(v.path)
-}
-
-// Database returns the underlying database. Callers must not retain it.
-func (v *Vault) Database() *dbdoc.Database {
-	v.mu.Lock()
-	defer v.mu.Unlock()
-	return v.db
+	if err := v.saveLocked(v.path); err != nil {
+		v.key = oldKey
+		v.db.Meta.MasterKeyChanged = oldChanged
+		v.dirty = oldDirty
+		return err
+	}
+	return nil
 }
 
 // Info summarises the database.

@@ -28,7 +28,7 @@ func TestLegacyDatabaseGetsARecycleBin(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
-	if !opened.Database().Meta.RecycleBinEnabled {
+	if !opened.db.Meta.RecycleBinEnabled {
 		t.Error("opening a legacy database should switch the recycle bin policy on")
 	}
 	if !opened.Modified() {
@@ -48,7 +48,7 @@ func TestLegacyDatabaseGetsARecycleBin(t *testing.T) {
 	if err := opened.DeleteEntry(entries[1].ID, false); err != nil {
 		t.Fatalf("DeleteEntry: %v", err)
 	}
-	bin := opened.Database().RecycleBin()
+	bin := opened.db.RecycleBin()
 	if bin == nil {
 		t.Fatal("the recycle bin group was not created")
 	}
@@ -92,7 +92,7 @@ func TestDeliberatelyDisabledRecycleBinStaysDisabled(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if reopened.Database().Meta.RecycleBinEnabled {
+	if reopened.db.Meta.RecycleBinEnabled {
 		t.Error("an explicit choice must survive the migration")
 	}
 	rootID := reopened.RootID()
@@ -103,7 +103,7 @@ func TestDeliberatelyDisabledRecycleBinStaysDisabled(t *testing.T) {
 	if err := reopened.DeleteEntry(entryID, false); err != nil {
 		t.Fatal(err)
 	}
-	if reopened.Database().RecycleBin() != nil {
+	if reopened.db.RecycleBin() != nil {
 		t.Error("no recycle bin should be created when it is disabled")
 	}
 	if _, err := reopened.Entry(entryID); err == nil {
@@ -131,10 +131,10 @@ func TestLegacyDisabledMarkerIsCleanedUp(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
-	if !v.Database().Meta.RecycleBinEnabled {
+	if !v.db.Meta.RecycleBinEnabled {
 		t.Fatal("a stale marker must not keep the recycle bin switched off")
 	}
-	if _, ok := dbdoc.CustomDataValue(v.Database().Meta.CustomData, recycleBinDisabledKey); ok {
+	if _, ok := dbdoc.CustomDataValue(v.db.Meta.CustomData, recycleBinDisabledKey); ok {
 		t.Error("the stale marker should have been removed from the database")
 	}
 	rootID := v.RootID()
@@ -145,7 +145,7 @@ func TestLegacyDisabledMarkerIsCleanedUp(t *testing.T) {
 	if err := v.DeleteEntry(entryID, false); err != nil {
 		t.Fatalf("DeleteEntry: %v", err)
 	}
-	bin := v.Database().RecycleBin()
+	bin := v.db.RecycleBin()
 	if bin == nil || len(bin.Entries) != 1 {
 		t.Fatalf("the deleted entry did not end up in the recycle bin: %+v", bin)
 	}
@@ -174,7 +174,7 @@ func TestOrphanedRecycleBinGroupIsAdopted(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
-	adopted := v.Database().RecycleBin()
+	adopted := v.db.RecycleBin()
 	if adopted == nil {
 		t.Fatal("the existing recycle bin group should have been adopted")
 	}
@@ -190,8 +190,8 @@ func TestOrphanedRecycleBinGroupIsAdopted(t *testing.T) {
 	if len(summaries) != 1 || !summaries[0].IsRecycled {
 		t.Fatalf("the entries of the adopted bin are not marked as recycled: %+v", summaries)
 	}
-	if len(v.Database().Root.Groups) != 1 {
-		t.Errorf("the database has %d root groups, want only the adopted bin", len(v.Database().Root.Groups))
+	if len(v.db.Root.Groups) != 1 {
+		t.Errorf("the database has %d root groups, want only the adopted bin", len(v.db.Root.Groups))
 	}
 }
 
@@ -215,7 +215,7 @@ func TestStaleRecycleBinReferenceIsForgotten(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
-	if !v.Database().Meta.RecycleBinUUID.IsZero() {
+	if !v.db.Meta.RecycleBinUUID.IsZero() {
 		t.Error("the stale group reference should have been dropped")
 	}
 	rootID := v.RootID()
@@ -226,7 +226,7 @@ func TestStaleRecycleBinReferenceIsForgotten(t *testing.T) {
 	if err := v.DeleteEntry(entryID, false); err != nil {
 		t.Fatal(err)
 	}
-	bin := v.Database().RecycleBin()
+	bin := v.db.RecycleBin()
 	deleted, err := dbdoc.ParseUUID(entryID)
 	if err != nil {
 		t.Fatal(err)

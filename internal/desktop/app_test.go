@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 	"unicode/utf8"
 
 	"github.com/vivaui/viva/app"
@@ -13,6 +14,7 @@ import (
 	"github.com/vivaui/viva/ui"
 
 	"gokeep/internal/config"
+	"gokeep/internal/dbdoc"
 	"gokeep/internal/vault"
 )
 
@@ -32,7 +34,17 @@ func newTestPage(t *testing.T, language string) (*app.Driver, *Model) {
 	session := NewSession("test", store)
 	model := newModel(session)
 	page := ui.NewPage(ui.PageConfig{View: model.page, Theme: &model.theme})
-	windowConfig := page.Config(app.Config{Title: "GoKeep", Width: 1180, Height: 760})
+	windowConfig := page.Config(app.Config{
+		Title: "GoKeep", Width: 1180, Height: 760,
+		OnWake:     model.wake,
+		OnActivate: model.windowActivate,
+		OnMinimize: model.windowMinimize,
+		OnKey:      model.splitKey,
+	})
+	windowConfig.OnKey = model.trackKey(windowConfig.OnKey)
+	windowConfig.OnPointer = model.trackPointer(windowConfig.OnPointer)
+	windowConfig.OnShortcut = model.trackShortcut(windowConfig.OnShortcut)
+	windowConfig.OnScroll = model.trackScroll(windowConfig.OnScroll)
 	// The window's repaint request is the session's, exactly as in the application.
 	session.SetInvalidator(windowConfig.Invalidator)
 	driver, err := app.NewDriver(windowConfig, nil)
@@ -622,6 +634,158 @@ func TestTheThemeSwitchesBothWays(t *testing.T) {
 	}
 	if model.sess.Config().Get().Theme != "dark" {
 		t.Fatalf("the stored theme is %q, want dark", model.sess.Config().Get().Theme)
+	}
+}
+
+// setTestClock pins the session clock and restarts auto lock, so the tests can
+// advance idle time without sleeping. It returns the timer generation.
+func setTestClock(t *testing.T, model *Model, now *time.Time) int {
+	t.Helper()
+	model.sess.mu.Lock()
+	model.sess.now = func() time.Time { return *now }
+	model.sess.mu.Unlock()
+	model.sess.ResetAutoLock()
+	model.sess.mu.Lock()
+	defer model.sess.mu.Unlock()
+	return model.sess.autoLockSeq
+}
+
+func TestAutoLockLocksAfterTheConfiguredIdleTime(t *testing.T) {
+	driver, model := newTestPage(t, "en")
+	create(t, model, "master")
+	groupID, err := model.vault().CreateGroup("", "Mail", 0)
+	if err != nil {
+		t.Fatalf("cannot create the group: %v", err)
+	}
+	entryID, err := model.vault().CreateEntry(groupID, vault.EntryDTO{
+		Title: "Mailbox", UserName: "user", Password: "secret",
+	})
+	if err != nil {
+		t.Fatalf("cannot create the entry: %v", err)
+	}
+	model.reload()
+	model.selectGroup(groupID)
+	model.selectEntry(entryID)
+
+	cfg := model.sess.Config().Get()
+	cfg.AutoLockSeconds = 60
+	if err := model.sess.Config().Set(cfg); err != nil {
+		t.Fatalf("cannot store the auto lock setting: %v", err)
+	}
+	now := time.Date(2026, 11, 14, 10, 0, 0, 0, time.UTC)
+	seq := setTestClock(t, model, &now)
+	now = now.Add(61 * time.Second)
+	model.sess.checkAutoLock(seq)
+	if err := driver.Pump(); err != nil {
+		t.Fatalf("cannot apply the pending lock: %v", err)
+	}
+
+	if model.sess.Unlocked() {
+		t.Fatal("the workspace stayed open after the idle time")
+	}
+	if model.entryID != "" || model.hasDetail || model.detail.Password != "" {
+		t.Fatal("the open entry survived the auto lock")
+	}
+}
+
+func TestActivityPushesTheAutoLockDeadlineBack(t *testing.T) {
+	_, model := newTestPage(t, "en")
+	create(t, model, "master")
+	cfg := model.sess.Config().Get()
+	cfg.AutoLockSeconds = 60
+	if err := model.sess.Config().Set(cfg); err != nil {
+		t.Fatalf("cannot store the auto lock setting: %v", err)
+	}
+	now := time.Date(2026, 11, 14, 10, 0, 0, 0, time.UTC)
+	seq := setTestClock(t, model, &now)
+
+	now = now.Add(50 * time.Second)
+	model.sess.TouchActivity()
+	now = now.Add(20 * time.Second)
+	model.sess.checkAutoLock(seq)
+	model.wake()
+	if !model.sess.Unlocked() {
+		t.Fatal("activity did not move the idle deadline")
+	}
+
+	now = now.Add(41 * time.Second)
+	model.sess.mu.Lock()
+	seq = model.sess.autoLockSeq
+	model.sess.mu.Unlock()
+	model.sess.checkAutoLock(seq)
+	model.wake()
+	if model.sess.Unlocked() {
+		t.Fatal("the workspace stayed open after the new idle time")
+	}
+}
+
+func TestOptionsShowTheAutoLockSetting(t *testing.T) {
+	driver, model := newTestPage(t, "en")
+	create(t, model, "master")
+	model.opts = optionsState{open: true, cfg: model.sess.Config().Get()}
+	if err := paint(driver, model); err != nil {
+		t.Fatalf("cannot paint the options dialog: %v", err)
+	}
+	want := []string{
+		model.tf("options.autoLockSeconds", "seconds", model.opts.cfg.AutoLockSeconds),
+		model.t("options.lockOnMinimize"),
+	}
+	for _, text := range want {
+		found := false
+		for _, painted := range driver.Snapshot().Texts {
+			if painted.Value == text {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("the options dialog does not show %q", text)
+		}
+	}
+}
+
+func TestLockOnMinimizeLocksTheWorkspace(t *testing.T) {
+	driver, model := newTestPage(t, "en")
+	path := create(t, model, "master")
+	groupID, err := model.vault().CreateGroup("", "Mail", 0)
+	if err != nil {
+		t.Fatalf("cannot create the group: %v", err)
+	}
+	entryID, err := model.vault().CreateEntry(groupID, vault.EntryDTO{
+		Title: "Mailbox", Password: "secret",
+	})
+	if err != nil {
+		t.Fatalf("cannot create the entry: %v", err)
+	}
+	model.reload()
+	model.selectGroup(groupID)
+	model.selectEntry(entryID)
+
+	cfg := model.sess.Config().Get()
+	cfg.LockOnMinimize = true
+	if err := model.sess.Config().Set(cfg); err != nil {
+		t.Fatalf("cannot store the lock on minimize setting: %v", err)
+	}
+	if err := driver.SetMinimized(true); err != nil {
+		t.Fatalf("cannot minimize the test window: %v", err)
+	}
+	if model.sess.Unlocked() {
+		t.Fatal("minimizing the window left the workspace open")
+	}
+	if model.entryID != "" || model.hasDetail || model.detail.Password != "" {
+		t.Fatal("the open entry survived the minimize lock")
+	}
+	reopened, err := vault.Open(path, dbdoc.Key{Password: "master"})
+	if err != nil {
+		t.Fatalf("cannot reopen the database after the lock: %v", err)
+	}
+	defer reopened.Close()
+	entries, err := reopened.AllEntries(false)
+	if err != nil {
+		t.Fatalf("cannot list the reopened entries: %v", err)
+	}
+	if len(entries) != 1 || entries[0].Title != "Mailbox" {
+		t.Fatalf("the entry was not saved before locking: %+v", entries)
 	}
 }
 

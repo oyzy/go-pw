@@ -144,15 +144,17 @@ type header struct {
 
 // kdfParams rebuilds the KDF parameters from the header so the shared derivation code
 // in internal/dbdoc can be used.
-func (h *header) kdfParams() *dbdoc.KDFParams {
+func (h *header) kdfParams() (*dbdoc.KDFParams, error) {
 	var params *dbdoc.KDFParams
 	switch h.kdfID {
 	case KDFArgon2d:
 		params = dbdoc.NewKDFParams(dbdoc.KDFArgon2d)
 	case KDFArgon2id:
 		params = dbdoc.NewKDFParams(dbdoc.KDFArgon2id)
-	default:
+	case KDFAES:
 		params = dbdoc.NewKDFParams(dbdoc.KDFAES)
+	default:
+		return nil, fmt.Errorf("gkdb: unsupported key derivation function %d", h.kdfID)
 	}
 	params.Dict.SetBytes(dbdoc.KdfParamSeed, h.salt)
 	switch h.kdfID {
@@ -164,7 +166,7 @@ func (h *header) kdfParams() *dbdoc.KDFParams {
 		params.Dict.SetUint32(dbdoc.KdfParamParallelism, h.parallelism)
 		params.Dict.SetUint32(dbdoc.KdfParamVersion, h.argon2Ver)
 	}
-	return params
+	return params, nil
 }
 
 func kdfIDFor(params *dbdoc.KDFParams) (byte, error) {
@@ -253,6 +255,13 @@ func parseHeader(data []byte) (*header, error) {
 	}
 	if h.flags & ^CompressionGzip != 0 {
 		return nil, fmt.Errorf("gkdb: unsupported flags 0x%04x", h.flags)
+	}
+	params, err := h.kdfParams()
+	if err != nil {
+		return nil, err
+	}
+	if err := params.Validate(); err != nil {
+		return nil, fmt.Errorf("gkdb: invalid KDF parameters: %w", err)
 	}
 	return h, nil
 }
@@ -346,7 +355,11 @@ func Save(db *dbdoc.Database, key dbdoc.Key, opts Options) ([]byte, error) {
 	}
 	// The key is derived from the parameters exactly as they appear in the header, so
 	// the loader can rebuild them from the file alone (the header salt is the KDF salt).
-	transformed, err := h.kdfParams().Transform(composite)
+	params, err := h.kdfParams()
+	if err != nil {
+		return nil, err
+	}
+	transformed, err := params.Transform(composite)
 	if err != nil {
 		return nil, err
 	}
@@ -378,7 +391,11 @@ func Load(data []byte, key dbdoc.Key) (*dbdoc.Database, error) {
 	if err != nil {
 		return nil, err
 	}
-	transformed, err := h.kdfParams().Transform(composite)
+	params, err := h.kdfParams()
+	if err != nil {
+		return nil, err
+	}
+	transformed, err := params.Transform(composite)
 	if err != nil {
 		return nil, err
 	}

@@ -32,6 +32,14 @@ const (
 	KdfParamUUID        = "$UUID"
 )
 
+// KDF resource limits prevent untrusted headers from forcing excessive work.
+const (
+	MaxArgon2Memory      uint64 = uint64(argon2.MaxMemoryKiB) * 1024
+	MaxArgon2Iterations  uint64 = uint64(argon2.MaxPasses)
+	MaxArgon2Parallelism uint32 = uint32(argon2.MaxThreads)
+	MaxAESKDFRounds      uint64 = 200_000_000
+)
+
 // KDFParams wraps the variant dictionary stored in the KDBX 4 header field 11.
 // Unknown parameters are preserved on save so that databases written by other
 // applications survive a round trip.
@@ -76,27 +84,27 @@ func (p *KDFParams) Name() string {
 // Transform derives the 32 byte transformed key from the composite key.
 func (p *KDFParams) Transform(composite [32]byte) ([32]byte, error) {
 	var out [32]byte
+	if err := p.Validate(); err != nil {
+		return out, err
+	}
 	switch p.UUID() {
 	case KDFAES:
 		seed := p.Dict.GetBytes(KdfParamSeed)
 		rounds := p.Dict.GetUint64(KdfParamRounds, 0)
-		if len(seed) != 32 {
-			return out, fmt.Errorf("gokeep: AES-KDF seed must be 32 bytes, got %d", len(seed))
-		}
 		return aesTransformKey(seed, rounds, composite), nil
 
 	case KDFArgon2d, KDFArgon2id:
 		salt := p.Dict.GetBytes(KdfParamSeed)
-		version := p.Dict.GetUint32(KdfParamVersion, 0x13)
-		if version != 0x13 {
-			return out, fmt.Errorf("gokeep: Argon2 version 0x%x is not supported (only 0x13)", version)
-		}
+		version := uint32(p.Dict.GetUint64(KdfParamVersion, 0x13))
+		memory := p.Dict.GetUint64(KdfParamMemory, 64*1024*1024)
+		iterations := p.Dict.GetUint64(KdfParamIterations, 2)
+		parallelism := p.Dict.GetUint64(KdfParamParallelism, 2)
 		cfg := argon2.Config{
 			Version: version,
 			// KeePass stores M in bytes; Argon2 wants KiB.
-			Memory:  uint32(p.Dict.GetUint64(KdfParamMemory, 64*1024*1024) / 1024),
-			Time:    uint32(p.Dict.GetUint64(KdfParamIterations, 2)),
-			Threads: uint8(p.Dict.GetUint32(KdfParamParallelism, 2)),
+			Memory:  uint32(memory / 1024),
+			Time:    uint32(iterations),
+			Threads: uint8(parallelism),
 			KeyLen:  32,
 			Salt:    salt,
 			Secret:  p.Dict.GetBytes(KdfParamSecretKey),
@@ -106,9 +114,6 @@ func (p *KDFParams) Transform(composite [32]byte) ([32]byte, error) {
 			cfg.Type = argon2.TypeD
 		} else {
 			cfg.Type = argon2.TypeID
-		}
-		if cfg.Threads == 0 {
-			cfg.Threads = 1
 		}
 		key, err := argon2.DeriveKey(composite[:], cfg)
 		if err != nil {
@@ -172,9 +177,42 @@ func (p *KDFParams) Validate() error {
 		if len(p.Dict.GetBytes(KdfParamSeed)) != 32 {
 			return errors.New("gokeep: AES-KDF parameters need a 32 byte seed")
 		}
+		rounds := p.Dict.GetUint64(KdfParamRounds, 0)
+		if rounds == 0 {
+			return errors.New("gokeep: AES-KDF rounds must be at least 1")
+		}
+		if rounds > MaxAESKDFRounds {
+			return fmt.Errorf("gokeep: AES-KDF rounds must not exceed %d", MaxAESKDFRounds)
+		}
 	case KDFArgon2d, KDFArgon2id:
 		if len(p.Dict.GetBytes(KdfParamSeed)) < 8 {
 			return errors.New("gokeep: Argon2 parameters need a salt of at least 8 bytes")
+		}
+		version := p.Dict.GetUint64(KdfParamVersion, 0x13)
+		if version != 0x13 {
+			return fmt.Errorf("gokeep: Argon2 version 0x%x is not supported (only 0x13)", version)
+		}
+		memory := p.Dict.GetUint64(KdfParamMemory, 64*1024*1024)
+		iterations := p.Dict.GetUint64(KdfParamIterations, 2)
+		parallelism := p.Dict.GetUint64(KdfParamParallelism, 2)
+		if parallelism == 0 {
+			return errors.New("gokeep: Argon2 parallelism must be at least 1")
+		}
+		if parallelism > uint64(MaxArgon2Parallelism) {
+			return fmt.Errorf("gokeep: Argon2 parallelism must not exceed %d", MaxArgon2Parallelism)
+		}
+		if iterations == 0 {
+			return errors.New("gokeep: Argon2 iterations must be at least 1")
+		}
+		if iterations > MaxArgon2Iterations {
+			return fmt.Errorf("gokeep: Argon2 iterations must not exceed %d", MaxArgon2Iterations)
+		}
+		if memory > MaxArgon2Memory {
+			return fmt.Errorf("gokeep: Argon2 memory must not exceed %d bytes", MaxArgon2Memory)
+		}
+		minMemory := uint64(8*1024) * parallelism
+		if memory < minMemory {
+			return fmt.Errorf("gokeep: Argon2 memory must be at least %d bytes", minMemory)
 		}
 	default:
 		return fmt.Errorf("gokeep: unsupported key derivation function %s", p.UUID())

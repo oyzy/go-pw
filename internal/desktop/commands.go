@@ -118,7 +118,21 @@ func (m *Model) cmdLock() {
 func (m *Model) afterClose() {
 	m.groupID, m.entryID, m.search = "", "", ""
 	m.entries, m.rows = nil, nil
+	m.detail = vault.EntryDTO{}
 	m.hasDetail = false
+	m.editor = editorState{}
+	m.group = groupState{}
+	m.gen = generatorState{}
+	m.opts = optionsState{}
+	m.dbset = settingsState{}
+	m.key = keyState{}
+	m.move = moveState{}
+	m.confirm = confirmState{}
+	m.searchOpen, m.searchResult = false, false
+	m.dups, m.expired = nil, nil
+	m.about, m.shortcutsHelp = false, false
+	m.quitAsk, m.allowClose = false, nil
+	m.focus = ""
 	m.lock = lockState{preset: presetStandard, path: m.sess.Config().Get().LastDatabase}
 	m.info(m.t("toast.clipboardCleared"))
 }

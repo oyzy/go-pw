@@ -89,11 +89,21 @@ type Session struct {
 	clipTimer   *time.Timer
 	quitting    bool
 	invalidator *app.Invalidator
+
+	// Auto lock is driven by a deadline rather than a fixed tick: every user
+	// activity pushes autoLockAt forward, and the timer that is already running
+	// only compares the clock when it fires. The window thread performs the lock
+	// itself in OnWake, so the model can be cleared on the thread that owns it.
+	now             func() time.Time
+	autoLockAt      time.Time
+	autoLockTimer   *time.Timer
+	autoLockSeq     int
+	autoLockPending bool
 }
 
 // NewSession loads the configuration and language packs.
 func NewSession(version string, store *config.Store) *Session {
-	s := &Session{version: version, cfg: store}
+	s := &Session{version: version, cfg: store, now: time.Now}
 	s.tr = newI18n(store.Get().Language)
 	return s
 }
@@ -131,6 +141,132 @@ func (s *Session) Invalidate() {
 	if invalidator != nil {
 		invalidator.Invalidate()
 	}
+}
+
+// TouchActivity records that the user did something. It moves the auto-lock
+// deadline forward without replacing the running timer, so pointer moves do not
+// allocate a new timer for every event.
+func (s *Session) TouchActivity() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.touchActivityLocked()
+}
+
+func (s *Session) touchActivityLocked() {
+	// A click that arrives after the timer requested a lock but before OnWake
+	// ran means the user is still there.
+	s.autoLockPending = false
+	if s.v == nil {
+		s.stopAutoLockLocked()
+		return
+	}
+	idle, enabled := s.autoLockIdleLocked()
+	if !enabled {
+		s.stopAutoLockLocked()
+		return
+	}
+	s.autoLockAt = s.clock().Add(idle)
+	if s.autoLockTimer == nil {
+		s.scheduleAutoLockLocked(idle)
+	}
+}
+
+func (s *Session) autoLockIdleLocked() (time.Duration, bool) {
+	seconds := clampAutoLockSeconds(s.cfg.Get().AutoLockSeconds)
+	if seconds <= 0 {
+		return 0, false
+	}
+	return time.Duration(seconds) * time.Second, true
+}
+
+// ResetAutoLock restarts the idle timer after the setting or the open database
+// changed. Unlike TouchActivity it replaces the timer, so a newly shorter
+// interval takes effect immediately.
+func (s *Session) ResetAutoLock() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.stopAutoLockLocked()
+	if s.v == nil {
+		return
+	}
+	s.startAutoLockLocked()
+}
+
+func (s *Session) startAutoLockLocked() {
+	idle, enabled := s.autoLockIdleLocked()
+	if !enabled {
+		return
+	}
+	s.autoLockAt = s.clock().Add(idle)
+	s.scheduleAutoLockLocked(idle)
+}
+
+// scheduleAutoLockLocked starts the one timer that checks the deadline. The
+// caller holds the session lock.
+func (s *Session) scheduleAutoLockLocked(delay time.Duration) {
+	if delay < time.Millisecond {
+		delay = time.Millisecond
+	}
+	if s.autoLockTimer != nil {
+		s.autoLockTimer.Stop()
+	}
+	s.autoLockSeq++
+	seq := s.autoLockSeq
+	s.autoLockTimer = time.AfterFunc(delay, func() { s.checkAutoLock(seq) })
+}
+
+// stopAutoLockLocked cancels the timer and invalidates a callback that has
+// already started. The caller holds the session lock.
+func (s *Session) stopAutoLockLocked() {
+	s.autoLockSeq++
+	if s.autoLockTimer != nil {
+		s.autoLockTimer.Stop()
+		s.autoLockTimer = nil
+	}
+	s.autoLockAt = time.Time{}
+	s.autoLockPending = false
+}
+
+func (s *Session) clock() time.Time {
+	if s.now != nil {
+		return s.now()
+	}
+	return time.Now()
+}
+
+// checkAutoLock runs on the timer goroutine. It never touches the model: it
+// only requests a lock, and OnWake performs it on the window thread.
+func (s *Session) checkAutoLock(seq int) {
+	s.mu.Lock()
+	if seq != s.autoLockSeq || s.v == nil {
+		s.mu.Unlock()
+		return
+	}
+	now := s.clock()
+	if now.Before(s.autoLockAt) {
+		s.scheduleAutoLockLocked(s.autoLockAt.Sub(now))
+		s.mu.Unlock()
+		return
+	}
+	s.autoLockSeq++
+	if s.autoLockTimer != nil {
+		s.autoLockTimer.Stop()
+	}
+	s.autoLockTimer = nil
+	s.autoLockAt = time.Time{}
+	s.autoLockPending = true
+	s.mu.Unlock()
+	s.Invalidate()
+}
+
+// TakeAutoLockRequest asks whether the idle timer wants the workspace locked.
+// The window thread calls it from OnWake, before the next paint.
+func (s *Session) TakeAutoLockRequest() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	pending := s.autoLockPending
+	s.autoLockPending = false
+	return pending
 }
 
 // Vault returns the open database, or nil when the workspace is locked.
@@ -251,6 +387,10 @@ func (s *Session) setVault(v *vault.Vault) {
 	s.mu.Lock()
 	previous := s.v
 	s.v = v
+	s.stopAutoLockLocked()
+	if v != nil {
+		s.startAutoLockLocked()
+	}
 	s.mu.Unlock()
 	if previous != nil && previous != v {
 		previous.Close()
@@ -299,7 +439,7 @@ func (s *Session) ChangeKey(password, keyFilePath string) error {
 	if err := v.ChangeKey(key); err != nil {
 		return translate(CodeSaveFailed, err)
 	}
-	return translate(CodeSaveFailed, v.Save())
+	return nil
 }
 
 // CloseDatabase saves when asked and forgets the open database.
@@ -322,6 +462,7 @@ func (s *Session) Lock() {
 	s.mu.Lock()
 	v := s.v
 	s.v = nil
+	s.stopAutoLockLocked()
 	timer := s.clipTimer
 	s.clipTimer = nil
 	s.clipClearAt = time.Time{}

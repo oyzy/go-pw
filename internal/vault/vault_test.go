@@ -29,7 +29,7 @@ func TestOpenLocalisesRecycleBin(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
-	reloaded := loaded.Database()
+	reloaded := loaded.db
 	got := reloaded.RecycleBin()
 	if got == nil {
 		t.Fatal("the recycle bin is missing")
@@ -68,7 +68,7 @@ func TestDeleteCreatesRecycleBinOnDemand(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
-	if groups := v.Database().Groups(); len(groups) != 1 {
+	if groups := v.db.Groups(); len(groups) != 1 {
 		t.Fatalf("a new database has %d groups (including the root), want 1", len(groups))
 	}
 	rootID := v.RootID()
@@ -79,7 +79,7 @@ func TestDeleteCreatesRecycleBinOnDemand(t *testing.T) {
 	if err := v.DeleteEntry(entryID, false); err != nil {
 		t.Fatalf("DeleteEntry: %v", err)
 	}
-	bin := v.Database().RecycleBin()
+	bin := v.db.RecycleBin()
 	if bin == nil {
 		t.Fatal("the recycle bin should have been created by the delete")
 	}
@@ -188,7 +188,7 @@ func TestDatabaseThroughTheService(t *testing.T) {
 	if entry.Password != "secret" {
 		t.Errorf("password after the round trip = %q", entry.Password)
 	}
-	if entry := findEntryByTitle(final.Database(), "Native entry"); entry == nil {
+	if entry := findEntryByTitle(final.db, "Native entry"); entry == nil {
 		t.Error("the copy lost its entry")
 	}
 	// A file of another password manager is not a database: the container is the only

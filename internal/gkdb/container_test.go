@@ -24,7 +24,11 @@ func TestHeaderSaltDrivesKeyDerivation(t *testing.T) {
 		t.Fatalf("header salt length = %d", len(h.salt))
 	}
 	composite, _ := key.CompositeKey()
-	transformed, err := h.kdfParams().Transform(composite)
+	params, err := h.kdfParams()
+	if err != nil {
+		t.Fatal(err)
+	}
+	transformed, err := params.Transform(composite)
 	if err != nil {
 		t.Fatal(err)
 	}

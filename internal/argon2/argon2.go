@@ -32,6 +32,13 @@ const (
 	Version13 uint32 = 0x13
 )
 
+// Limits bound the resources a single derivation may consume.
+const (
+	MaxMemoryKiB uint32 = 1024 * 1024
+	MaxPasses    uint32 = 16
+	MaxThreads   uint8  = 8
+)
+
 // Config describes one Argon2 invocation.
 type Config struct {
 	Type    Type
@@ -57,8 +64,17 @@ func DeriveKey(password []byte, cfg Config) ([]byte, error) {
 	if cfg.Time < 1 {
 		return nil, errors.New("argon2: number of passes must be at least 1")
 	}
+	if cfg.Time > MaxPasses {
+		return nil, fmt.Errorf("argon2: number of passes must not exceed %d", MaxPasses)
+	}
 	if cfg.Threads < 1 {
 		return nil, errors.New("argon2: parallelism must be at least 1")
+	}
+	if cfg.Threads > MaxThreads {
+		return nil, fmt.Errorf("argon2: parallelism must not exceed %d", MaxThreads)
+	}
+	if cfg.Memory > MaxMemoryKiB {
+		return nil, fmt.Errorf("argon2: memory must not exceed %d KiB", MaxMemoryKiB)
 	}
 	if cfg.KeyLen < 4 {
 		return nil, errors.New("argon2: output length must be at least 4 bytes")
