@@ -102,7 +102,7 @@ func (m *Model) lockRecents(c ui.C) {
 	ui.Column(c).FillWidth().Gap(2).Children(func() {
 		for _, path := range recent {
 			path := path
-			row := ui.Row(c).FillWidth().Height(30).Items(ui.Center).Gap(12).PadX(8).
+			row := ui.Row(c).FillWidth().Height(32).Items(ui.Center).Gap(10).PadX(8).
 				Radius(6).Hit(ui.ID(c), fileLabel(path)).Hover(ui.Look{}.Background(m.theme.Hover)).
 				Tooltip(path)
 			if path == m.lock.path {
@@ -111,6 +111,10 @@ func (m *Model) lockRecents(c ui.C) {
 			row.Children(func() {
 				ui.Text(c, fileLabel(path)).Grow(1).Ellipsis()
 				ui.Text(c, shortDir(path)).Muted().FontSize(11).Ellipsis()
+				if ui.Button(c, m.t("lock.removeRecent")).Ghost().Height(26).FontSize(12).
+					Tooltip(m.tf("lock.removeRecentNamed", "name", fileLabel(path))).Clicked() {
+					after(c, func() { m.removeRecent(path) })
+				}
 			})
 			if row.Clicked() {
 				m.lock.path = path
@@ -119,6 +123,22 @@ func (m *Model) lockRecents(c ui.C) {
 			}
 		}
 	})
+}
+
+// removeRecent forgets one file from the lock screen without opening it. When the
+// removed file is the current selection, the path field is cleared as well, so the
+// screen never appears to select an entry that is no longer in the list.
+func (m *Model) removeRecent(path string) {
+	if err := m.sess.Config().RemoveRecent(path); err != nil {
+		m.fail(err)
+		return
+	}
+	if m.lock.path == path {
+		m.lock.path = ""
+		m.lock.useKeyFile = false
+		m.lock.message, m.lock.messageErr = "", false
+	}
+	m.info(m.tf("toast.recentRemoved", "name", fileLabel(path)))
 }
 
 // lockCreateFields is the new-database half of the lock screen.

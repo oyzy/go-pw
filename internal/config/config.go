@@ -166,12 +166,18 @@ func (c *Store) RemoveRecent(path string) error {
 	defer c.mu.Unlock()
 	cfg := c.cfg
 	files := make([]string, 0, len(cfg.RecentFiles))
+	removed := false
 	for _, f := range cfg.RecentFiles {
 		if !sameFile(f, path) {
 			files = append(files, f)
+		} else {
+			removed = true
 		}
 	}
 	cfg.RecentFiles = files
+	if removed && sameFile(cfg.LastDatabase, path) {
+		cfg.LastDatabase = ""
+	}
 	c.cfg = cfg
 	return c.save()
 }

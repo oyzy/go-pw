@@ -419,6 +419,32 @@ func TestTheRecentListIsFullWidthRows(t *testing.T) {
 	}
 }
 
+func TestARecentDatabaseCanBeRemovedFromTheLockScreen(t *testing.T) {
+	driver, model := newTestPage(t, "zh-CN")
+	path := create(t, model, "master")
+	model.sess.Lock()
+	model.lock = lockState{path: path}
+	if err := paint(driver, model); err != nil {
+		t.Fatalf("cannot paint the lock screen: %v", err)
+	}
+
+	clickLabel(t, driver, model, model.t("lock.removeRecent"))
+
+	cfg := model.sess.Config().Get()
+	if len(cfg.RecentFiles) != 0 {
+		t.Fatalf("the recent list still holds %d files after removing the only one", len(cfg.RecentFiles))
+	}
+	if cfg.LastDatabase != "" {
+		t.Fatalf("the removed database is still remembered as the last file: %q", cfg.LastDatabase)
+	}
+	if model.lock.path != "" {
+		t.Fatalf("removing the selected recent file left %q in the path field", model.lock.path)
+	}
+	if model.sess.Unlocked() {
+		t.Fatal("removing a recent file opened the database")
+	}
+}
+
 func TestTheLockScreenOpensTheDatabase(t *testing.T) {
 	_, model := newTestPage(t, "en")
 	path := create(t, model, "master")
