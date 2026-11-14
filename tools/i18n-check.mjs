@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
-const localeDir = join(root, "frontend", "dist", "locales");
+const localeDir = join(root, "internal", "desktop", "locales");
 const base = "zh-CN";
 
 function flatten(source, prefix = "", out = {}) {

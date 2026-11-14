@@ -4,8 +4,9 @@
 //
 //	go run ./tools/makeicon
 //
-// It writes build/appicon.png (the source for the platform icon set) and
-// frontend/dist/icon.png (favicon and lock screen logo).
+// It writes build/appicon.png (the master viva build turns into the .exe icon) and
+// internal/desktop/assets/appicon.png (the copy embedded in the program for the
+// window and taskbar).
 package main
 
 import (
@@ -139,9 +140,10 @@ func writePNG(path string, img image.Image) {
 }
 
 func main() {
-	// build/appicon.png is the 1024px master the Wails icon generator turns into
-	// build/windows/icon.ico and build/darwin/icons.icns.
+	// build/appicon.png is the 1024px master: viva.toml points [app] icon at it, and
+	// viva build turns it into the icon and version resources of the program.
 	writePNG(filepath.Join("build", "appicon.png"), render(1024))
-	// A small version for the user interface (favicon, lock screen).
-	writePNG(filepath.Join("frontend", "dist", "icon.png"), render(256))
+	// The same master, embedded in the binary and handed to the window at startup so
+	// the title bar and the taskbar show it without reading a file.
+	writePNG(filepath.Join("internal", "desktop", "assets", "appicon.png"), render(1024))
 }

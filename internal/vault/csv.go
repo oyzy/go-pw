@@ -7,7 +7,7 @@ import (
 	"strconv"
 	"strings"
 
-	"gokeep/internal/kdbx"
+	"gokeep/internal/dbdoc"
 )
 
 // csvHeader is the column order KeePass 2 uses for its default CSV export.
@@ -30,16 +30,16 @@ func (v *Vault) ExportCSV(w io.Writer) error {
 	}
 	// Every entry is exported, including the ones that live directly in the root group
 	// (which has no visible name, so its group column stays empty).
-	var walk func(group *kdbx.Group) error
-	walk = func(group *kdbx.Group) error {
-		entries := append([]*kdbx.Entry(nil), group.Entries...)
+	var walk func(group *dbdoc.Group) error
+	walk = func(group *dbdoc.Group) error {
+		entries := append([]*dbdoc.Entry(nil), group.Entries...)
 		sortEntriesByTitle(entries)
 		groupName := ""
 		if group != v.db.Root {
 			groupName = groupPath(v.db.Root, group)
 		}
 		for _, e := range entries {
-			password, _ := e.Field(kdbx.FieldPassword)
+			password, _ := e.Field(dbdoc.FieldPassword)
 			totp := ""
 			for _, f := range e.CustomFields() {
 				if f.Key == "TOTP" || f.Key == "otp" {
@@ -48,11 +48,11 @@ func (v *Vault) ExportCSV(w io.Writer) error {
 			}
 			record := []string{
 				groupName,
-				fieldOf(e, kdbx.FieldTitle),
-				fieldOf(e, kdbx.FieldUserName),
+				fieldOf(e, dbdoc.FieldTitle),
+				fieldOf(e, dbdoc.FieldUserName),
 				password,
-				fieldOf(e, kdbx.FieldURL),
-				fieldOf(e, kdbx.FieldNotes),
+				fieldOf(e, dbdoc.FieldURL),
+				fieldOf(e, dbdoc.FieldNotes),
 				totp,
 				strconv.Itoa(e.IconID),
 				formatTime(e.Times.LastModification),
@@ -129,22 +129,22 @@ func (v *Vault) ImportCSV(r io.Reader, targetGroupID string) (int, error) {
 		if groupName != "" && target == v.db.Root {
 			destination = findOrCreateGroup(v.db.Root, groupName)
 		}
-		entry := kdbx.NewEntry()
-		entry.SetField(kdbx.FieldTitle, title, false)
-		entry.SetField(kdbx.FieldUserName, user, v.db.Meta.MemoryProtection.ProtectUserName)
-		entry.SetField(kdbx.FieldPassword, password, true)
-		entry.SetField(kdbx.FieldURL, url, v.db.Meta.MemoryProtection.ProtectURL)
-		entry.SetField(kdbx.FieldNotes, notes, false)
+		entry := dbdoc.NewEntry()
+		entry.SetField(dbdoc.FieldTitle, title, false)
+		entry.SetField(dbdoc.FieldUserName, user, v.db.Meta.MemoryProtection.ProtectUserName)
+		entry.SetField(dbdoc.FieldPassword, password, true)
+		entry.SetField(dbdoc.FieldURL, url, v.db.Meta.MemoryProtection.ProtectURL)
+		entry.SetField(dbdoc.FieldNotes, notes, false)
 		if totp := column(record, "totp"); totp != "" {
 			entry.SetField("TOTP", totp, true)
 		}
 		if icon := column(record, "icon", "iconid"); icon != "" {
-			if value, err := strconv.Atoi(icon); err == nil && value >= 0 && value <= kdbx.MaxBuiltinIconID {
+			if value, err := strconv.Atoi(icon); err == nil && value >= 0 && value <= dbdoc.MaxBuiltinIconID {
 				entry.IconID = value
 			}
 		}
 		if modified := column(record, "last modified", "modified"); modified != "" {
-			if t := kdbx.ParseTime(modified); !t.IsZero() {
+			if t := dbdoc.ParseTime(modified); !t.IsZero() {
 				entry.Times.LastModification = t
 			}
 		}
@@ -156,13 +156,13 @@ func (v *Vault) ImportCSV(r io.Reader, targetGroupID string) (int, error) {
 	return imported, nil
 }
 
-func fieldOf(e *kdbx.Entry, key string) string {
+func fieldOf(e *dbdoc.Entry, key string) string {
 	value, _ := e.Field(key)
 	return value
 }
 
 // findOrCreateGroup resolves a "/" or "\\" separated group path.
-func findOrCreateGroup(root *kdbx.Group, path string) *kdbx.Group {
+func findOrCreateGroup(root *dbdoc.Group, path string) *dbdoc.Group {
 	parts := strings.FieldsFunc(path, func(r rune) bool { return r == '/' || r == '\\' })
 	current := root
 	for _, part := range parts {
@@ -172,7 +172,7 @@ func findOrCreateGroup(root *kdbx.Group, path string) *kdbx.Group {
 		}
 		next := current.FindGroupByName(part)
 		if next == nil {
-			next = kdbx.NewGroup(part)
+			next = dbdoc.NewGroup(part)
 			current.Groups = append(current.Groups, next)
 		}
 		current = next

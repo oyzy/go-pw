@@ -1,0 +1,22 @@
+[app]
+name = "GoKeep"
+id = "dev.gokeep.app"
+version = "1.0.0"
+executable = "GoKeep"
+package = "."
+# 1024x1024 PNG: viva build turns it into the .exe icon and the window icon.
+icon = "build/appicon.png"
+
+[build]
+out = "bin"
+
+[mac]
+category = "public.app-category.productivity"
+
+[windows]
+publisher = "GoKeep"
+
+[linux]
+category = "Utility"
+comment = "Password manager with its own encrypted database format"
+keywords = ["password", "manager", "vault", "encryption"]

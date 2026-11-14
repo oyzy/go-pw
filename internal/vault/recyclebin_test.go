@@ -4,7 +4,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"gokeep/internal/kdbx"
+	"gokeep/internal/dbdoc"
 )
 
 // TestLegacyDatabaseGetsARecycleBin reproduces the situation of databases created by
@@ -12,19 +12,17 @@ import (
 // removed it for good and no recycle bin group ever appeared.
 func TestLegacyDatabaseGetsARecycleBin(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "legacy.kdbx")
-	key := kdbx.Key{Password: "pw"}
+	path := filepath.Join(dir, "legacy.gkdb")
+	key := dbdoc.Key{Password: "pw"}
 
 	// Build the database the way the old code did.
-	db := kdbx.NewDatabase("Legacy", "")
+	db := dbdoc.NewDatabase("Legacy", "")
 	db.Meta.RecycleBinEnabled = false
-	db.Meta.RecycleBinUUID = kdbx.ZeroUUID
-	entry := kdbx.NewEntry()
-	entry.SetField(kdbx.FieldTitle, "Keep me", false)
+	db.Meta.RecycleBinUUID = dbdoc.ZeroUUID
+	entry := dbdoc.NewEntry()
+	entry.SetField(dbdoc.FieldTitle, "Keep me", false)
 	db.Root.Entries = append(db.Root.Entries, entry)
-	if err := kdbx.SaveFile(path, db, key, kdbx.SaveOptions{}); err != nil {
-		t.Fatal(err)
-	}
+	writeDatabase(t, path, db, key)
 
 	opened, err := Open(path, key)
 	if err != nil {
@@ -61,7 +59,7 @@ func TestLegacyDatabaseGetsARecycleBin(t *testing.T) {
 	tree := opened.Tree()
 	found := false
 	for _, group := range tree {
-		if group.Name == kdbx.RecycleBinName {
+		if group.Name == dbdoc.RecycleBinName {
 			found = true
 			if len(group.EntryIDs) != 1 {
 				t.Errorf("the tree reports %d entries in the recycle bin", len(group.EntryIDs))
@@ -76,8 +74,8 @@ func TestLegacyDatabaseGetsARecycleBin(t *testing.T) {
 // A database whose recycle bin the user disabled on purpose must keep that setting.
 func TestDeliberatelyDisabledRecycleBinStaysDisabled(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "no-bin.kdbx")
-	key := kdbx.Key{Password: "pw"}
+	path := filepath.Join(dir, "no-bin.gkdb")
+	key := dbdoc.Key{Password: "pw"}
 
 	v, err := Create(path, key, "No bin", DefaultSaveSettings())
 	if err != nil {
@@ -118,18 +116,16 @@ func TestDeliberatelyDisabledRecycleBinStaysDisabled(t *testing.T) {
 // for good even though the interface offered to move it to the recycle bin.
 func TestLegacyDisabledMarkerIsCleanedUp(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "legacy-marker.kdbx")
-	key := kdbx.Key{Password: "pw"}
+	path := filepath.Join(dir, "legacy-marker.gkdb")
+	key := dbdoc.Key{Password: "pw"}
 
-	db := kdbx.NewDatabase("Legacy marker", "")
+	db := dbdoc.NewDatabase("Legacy marker", "")
 	db.Meta.RecycleBinEnabled = false
-	db.Meta.CustomData = kdbx.SetCustomDataValue(db.Meta.CustomData, recycleBinDisabledKey, "true")
-	entry := kdbx.NewEntry()
-	entry.SetField(kdbx.FieldTitle, "Deleted by mistake", false)
+	db.Meta.CustomData = dbdoc.SetCustomDataValue(db.Meta.CustomData, recycleBinDisabledKey, "true")
+	entry := dbdoc.NewEntry()
+	entry.SetField(dbdoc.FieldTitle, "Deleted by mistake", false)
 	db.Root.Entries = append(db.Root.Entries, entry)
-	if err := kdbx.SaveFile(path, db, key, kdbx.SaveOptions{}); err != nil {
-		t.Fatal(err)
-	}
+	writeDatabase(t, path, db, key)
 
 	v, err := Open(path, key)
 	if err != nil {
@@ -138,7 +134,7 @@ func TestLegacyDisabledMarkerIsCleanedUp(t *testing.T) {
 	if !v.Database().Meta.RecycleBinEnabled {
 		t.Fatal("a stale marker must not keep the recycle bin switched off")
 	}
-	if _, ok := kdbx.CustomDataValue(v.Database().Meta.CustomData, recycleBinDisabledKey); ok {
+	if _, ok := dbdoc.CustomDataValue(v.Database().Meta.CustomData, recycleBinDisabledKey); ok {
 		t.Error("the stale marker should have been removed from the database")
 	}
 	rootID := v.RootID()
@@ -161,20 +157,18 @@ func TestLegacyDisabledMarkerIsCleanedUp(t *testing.T) {
 // second bin was created on the next delete.
 func TestOrphanedRecycleBinGroupIsAdopted(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "orphan.kdbx")
-	key := kdbx.Key{Password: "pw"}
+	path := filepath.Join(dir, "orphan.gkdb")
+	key := dbdoc.Key{Password: "pw"}
 
-	db := kdbx.NewDatabase("Orphan", "")
+	db := dbdoc.NewDatabase("Orphan", "")
 	db.Meta.RecycleBinEnabled = true
-	db.Meta.RecycleBinUUID = kdbx.ZeroUUID
-	bin := kdbx.NewGroup(kdbx.LegacyRecycleBinName)
+	db.Meta.RecycleBinUUID = dbdoc.ZeroUUID
+	bin := dbdoc.NewGroup(dbdoc.LegacyRecycleBinName)
 	db.Root.Groups = append(db.Root.Groups, bin)
-	entry := kdbx.NewEntry()
-	entry.SetField(kdbx.FieldTitle, "Old deleted entry", false)
+	entry := dbdoc.NewEntry()
+	entry.SetField(dbdoc.FieldTitle, "Old deleted entry", false)
 	bin.Entries = append(bin.Entries, entry)
-	if err := kdbx.SaveFile(path, db, key, kdbx.SaveOptions{}); err != nil {
-		t.Fatal(err)
-	}
+	writeDatabase(t, path, db, key)
 
 	v, err := Open(path, key)
 	if err != nil {
@@ -205,19 +199,17 @@ func TestOrphanedRecycleBinGroupIsAdopted(t *testing.T) {
 // group which no longer exists does not block the creation of a new recycle bin.
 func TestStaleRecycleBinReferenceIsForgotten(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "stale.kdbx")
-	key := kdbx.Key{Password: "pw"}
+	path := filepath.Join(dir, "stale.gkdb")
+	key := dbdoc.Key{Password: "pw"}
 
-	db := kdbx.NewDatabase("Stale", "")
-	missing := kdbx.NewGroup("Gone")
+	db := dbdoc.NewDatabase("Stale", "")
+	missing := dbdoc.NewGroup("Gone")
 	db.Meta.RecycleBinEnabled = true
 	db.Meta.RecycleBinUUID = missing.UUID
-	entry := kdbx.NewEntry()
-	entry.SetField(kdbx.FieldTitle, "Keep", false)
+	entry := dbdoc.NewEntry()
+	entry.SetField(dbdoc.FieldTitle, "Keep", false)
 	db.Root.Entries = append(db.Root.Entries, entry)
-	if err := kdbx.SaveFile(path, db, key, kdbx.SaveOptions{}); err != nil {
-		t.Fatal(err)
-	}
+	writeDatabase(t, path, db, key)
 
 	v, err := Open(path, key)
 	if err != nil {
@@ -235,7 +227,7 @@ func TestStaleRecycleBinReferenceIsForgotten(t *testing.T) {
 		t.Fatal(err)
 	}
 	bin := v.Database().RecycleBin()
-	deleted, err := kdbx.ParseUUID(entryID)
+	deleted, err := dbdoc.ParseUUID(entryID)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -10,8 +10,8 @@ import (
 	"sync"
 	"time"
 
+	"gokeep/internal/dbdoc"
 	"gokeep/internal/gkdb"
-	"gokeep/internal/kdbx"
 )
 
 // Vault is one open database plus everything the user interface needs to know about it.
@@ -19,8 +19,8 @@ import (
 type Vault struct {
 	mu             sync.Mutex
 	path           string
-	db             *kdbx.Database
-	key            kdbx.Key
+	db             *dbdoc.Database
+	key            dbdoc.Key
 	dirty          bool
 	openedAt       time.Time
 	lastSaved      time.Time
@@ -29,30 +29,26 @@ type Vault struct {
 	recycleBinName string
 }
 
-// SaveSettings remembers the on-disk format chosen by the user.
+// SaveSettings remembers how the GoKeep container is written: which authenticated
+// cipher seals the payload and how expensive the key derivation of the master key is.
 type SaveSettings struct {
-	// Format is "kdbx" (KeePass compatible) or "gokeep" (the native format).
-	Format      string
-	Version     uint32
-	Cipher      kdbx.UUID
+	// Cipher is dbdoc.CipherAES256 (AES-256-GCM, the default) or dbdoc.CipherChaCha20
+	// (ChaCha20-Poly1305).
+	Cipher dbdoc.UUID
+	// Compression is dbdoc.CompressionGzip (the default) or dbdoc.CompressionNone.
 	Compression uint32
-	KDF         *kdbx.KDFParams
+	// KDF is the key derivation function of the master key; a nil value means the
+	// default of the container.
+	KDF *dbdoc.KDFParams
 }
 
-// Database file formats.
-const (
-	FormatKDBX   = "kdbx"
-	FormatGoKeep = "gokeep"
-)
-
-// DefaultSaveSettings matches what KeePass 2.60 writes for a new database.
+// DefaultSaveSettings is how a new database is written: AES-256-GCM over a gzip
+// compressed document, with the key derived by the default KDF of the container.
 func DefaultSaveSettings() SaveSettings {
 	return SaveSettings{
-		Format:      FormatKDBX,
-		Version:     kdbx.FileVersion41,
-		Cipher:      kdbx.CipherAES256,
-		Compression: kdbx.CompressionGzip,
-		KDF:         kdbx.DefaultKDFParams(),
+		Cipher:      dbdoc.CipherAES256,
+		Compression: dbdoc.CompressionGzip,
+		KDF:         gkdb.DefaultKDFParams(),
 	}
 }
 
@@ -60,7 +56,7 @@ func DefaultSaveSettings() SaveSettings {
 var ErrLocked = errors.New("vault: no database is open")
 
 // Open loads a database from disk.
-func Open(path string, key kdbx.Key) (*Vault, error) {
+func Open(path string, key dbdoc.Key) (*Vault, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
@@ -76,13 +72,12 @@ func Open(path string, key kdbx.Key) (*Vault, error) {
 		openedAt:       time.Now(),
 		lastSaved:      fileModTime(path),
 		settings:       settingsFromFile(path),
-		recycleBinName: kdbx.RecycleBinName,
+		recycleBinName: dbdoc.RecycleBinName,
 	}
 	// The state of the recycle bin as it is stored in the file, logged before the migration
 	// touches it. Nothing but these flags is written, so the log stays free of user data.
 	marker, hasMarker := recycleBinMarker(db)
 	slog.Info("database opened",
-		"format", v.settings.Format,
 		"recycleBinEnabled", db.Meta.RecycleBinEnabled,
 		"recycleBinGroup", db.RecycleBin() != nil,
 		"recycleBinMarker", marker,
@@ -137,7 +132,7 @@ func (v *Vault) adoptRecycleBinGroup() {
 		if v.db.RecycleBin() != nil {
 			return
 		}
-		v.db.Meta.RecycleBinUUID = kdbx.ZeroUUID
+		v.db.Meta.RecycleBinUUID = dbdoc.ZeroUUID
 		v.dirty = true
 		slog.Info("forgot a recycle bin group that no longer exists")
 	}
@@ -156,19 +151,20 @@ func (v *Vault) adoptRecycleBinGroup() {
 // bin, so that a group the user renamed is never touched.
 func (v *Vault) isRecycleBinName(name string) bool {
 	switch name {
-	case kdbx.RecycleBinName, kdbx.LegacyRecycleBinName, v.recycleBinNameOrDefault():
+	case dbdoc.RecycleBinName, dbdoc.LegacyRecycleBinName, v.recycleBinNameOrDefault():
 		return true
 	}
 	return false
 }
 
-// loadDatabase picks the reader that matches the file signature, so the user can open
-// KeePass databases and GoKeep databases with the same command.
-func loadDatabase(data []byte, key kdbx.Key) (*kdbx.Database, error) {
-	if gkdb.IsGoKeepFile(data) {
-		return gkdb.Load(data, key)
+// loadDatabase refuses a file that is not a GoKeep container, so a database of another
+// application is reported as "not a database file" instead of failing inside the
+// decryption code with a misleading message.
+func loadDatabase(data []byte, key dbdoc.Key) (*dbdoc.Database, error) {
+	if !gkdb.IsGoKeepFile(data) {
+		return nil, gkdb.ErrNotDatabase
 	}
-	return kdbx.Load(data, key)
+	return gkdb.Load(data, key)
 }
 
 // renameLegacyRecycleBin gives the recycle bin of an existing database the localised
@@ -179,7 +175,7 @@ func (v *Vault) renameLegacyRecycleBin() {
 	if bin == nil || bin.Name == v.recycleBinNameOrDefault() {
 		return
 	}
-	if bin.Name != kdbx.LegacyRecycleBinName && bin.Name != kdbx.RecycleBinName {
+	if bin.Name != dbdoc.LegacyRecycleBinName && bin.Name != dbdoc.RecycleBinName {
 		// The user renamed the group on purpose, leave it alone.
 		return
 	}
@@ -205,7 +201,7 @@ func (v *Vault) SetRecycleBinName(name string) {
 	if bin == nil || bin.Name == name {
 		return
 	}
-	if bin.Name == kdbx.LegacyRecycleBinName || bin.Name == kdbx.RecycleBinName || bin.Name == previous {
+	if bin.Name == dbdoc.LegacyRecycleBinName || bin.Name == dbdoc.RecycleBinName || bin.Name == previous {
 		bin.Name = name
 		bin.Times.Touch()
 		v.dirty = true
@@ -214,18 +210,18 @@ func (v *Vault) SetRecycleBinName(name string) {
 
 func (v *Vault) recycleBinNameOrDefault() string {
 	if v.recycleBinName == "" {
-		return kdbx.RecycleBinName
+		return dbdoc.RecycleBinName
 	}
 	return v.recycleBinName
 }
 
 // enableRecycleBinLocked creates the recycle bin with the localised name.
-func (v *Vault) enableRecycleBinLocked() *kdbx.Group {
+func (v *Vault) enableRecycleBinLocked() *dbdoc.Group {
 	if bin := v.db.RecycleBin(); bin != nil {
 		return bin
 	}
-	bin := kdbx.NewGroup(v.recycleBinNameOrDefault())
-	bin.IconID = kdbx.IconTrash
+	bin := dbdoc.NewGroup(v.recycleBinNameOrDefault())
+	bin.IconID = dbdoc.IconTrash
 	v.db.Root.Groups = append(v.db.Root.Groups, bin)
 	v.db.Meta.RecycleBinEnabled = true
 	v.db.Meta.RecycleBinUUID = bin.UUID
@@ -235,8 +231,8 @@ func (v *Vault) enableRecycleBinLocked() *kdbx.Group {
 }
 
 // Create makes a new database and writes it to disk.
-func Create(path string, key kdbx.Key, name string, settings SaveSettings) (*Vault, error) {
-	db := kdbx.NewDatabase(name, "")
+func Create(path string, key dbdoc.Key, name string, settings SaveSettings) (*Vault, error) {
+	db := dbdoc.NewDatabase(name, "")
 	v := &Vault{db: db, key: key, settings: settings}
 	if err := v.SaveAs(path, key); err != nil {
 		return nil, err
@@ -253,7 +249,7 @@ func (v *Vault) Close() {
 		v.zero()
 	}
 	v.db = nil
-	v.key = kdbx.Key{}
+	v.key = dbdoc.Key{}
 }
 
 // zero overwrites the key material we can reach.
@@ -301,7 +297,7 @@ func (v *Vault) SetSettings(s SaveSettings) {
 }
 
 // Key returns a copy of the credentials of the open database.
-func (v *Vault) Key() kdbx.Key {
+func (v *Vault) Key() dbdoc.Key {
 	v.mu.Lock()
 	defer v.mu.Unlock()
 	return v.key
@@ -315,44 +311,17 @@ func (v *Vault) Save() error {
 }
 
 // SaveAs writes the database to a new location and switches to it.
-func (v *Vault) SaveAs(path string, key kdbx.Key) error {
+func (v *Vault) SaveAs(path string, key dbdoc.Key) error {
 	v.mu.Lock()
 	defer v.mu.Unlock()
 	if key.Password != "" || len(key.KeyFile) > 0 {
 		v.key = key
-	}
-	// The extension decides the format, which is also how a database gets converted
-	// between the KeePass format and the native one.
-	switch strings.ToLower(filepath.Ext(path)) {
-	case gkdb.Extension:
-		v.settings.Format = FormatGoKeep
-		v.settings.Cipher = gokeepCipher(v.settings.Cipher)
-	case ".kdbx":
-		v.settings.Format = FormatKDBX
-		v.settings.Cipher = kdbxCipher(v.settings.Cipher)
 	}
 	if err := v.saveLocked(path); err != nil {
 		return err
 	}
 	v.path = path
 	return nil
-}
-
-// gokeepCipher maps a KDBX cipher identifier onto the GoKeep format (which uses an
-// authenticated cipher and keeps the same "AES-256 or ChaCha20" choice).
-func gokeepCipher(cipher kdbx.UUID) kdbx.UUID {
-	if cipher == kdbx.CipherChaCha20 {
-		return kdbx.CipherChaCha20
-	}
-	return kdbx.CipherAES256
-}
-
-// kdbxCipher maps the choice back for KDBX files.
-func kdbxCipher(cipher kdbx.UUID) kdbx.UUID {
-	if cipher == kdbx.CipherChaCha20 {
-		return kdbx.CipherChaCha20
-	}
-	return kdbx.CipherAES256
 }
 
 func (v *Vault) saveLocked(path string) error {
@@ -363,45 +332,29 @@ func (v *Vault) saveLocked(path string) error {
 		return errors.New("vault: the database is open in read-only mode")
 	}
 	if _, err := os.Stat(path); err == nil {
-		// KeePass keeps a ".bak" copy of the previous revision.
-		if err := kdbx.RotateBackups(path, 10); err != nil {
+		// The previous revision is kept next to the file, so an interrupted save or a
+		// mistake the user notices too late does not destroy the database.
+		if err := dbdoc.RotateBackups(path, 10); err != nil {
 			return err
 		}
-		if err := kdbx.WriteBackup(path); err != nil {
+		if err := dbdoc.WriteBackup(path); err != nil {
 			return err
 		}
 	}
-	if v.settings.Format == FormatGoKeep {
-		options := gkdb.DefaultOptions()
-		if v.settings.Cipher == kdbx.CipherChaCha20 {
-			options.Cipher = gkdb.CipherChaCha20Poly1305
-		}
-		options.Compression = gkdb.CompressionNone
-		if v.settings.Compression == kdbx.CompressionGzip {
-			options.Compression = gkdb.CompressionGzip
-		}
-		if v.settings.KDF != nil {
-			options.KDF = ensureKDFSalt(v.settings.KDF)
-		}
-		if err := gkdb.SaveFile(path, v.db, v.key, options); err != nil {
-			return err
-		}
+	options := gkdb.DefaultOptions()
+	if v.settings.Cipher == dbdoc.CipherChaCha20 {
+		options.Cipher = gkdb.CipherChaCha20Poly1305
+	}
+	if v.settings.Compression == dbdoc.CompressionGzip {
+		options.Compression = gkdb.CompressionGzip
 	} else {
-		opts := kdbx.SaveOptions{
-			Version:     v.settings.Version,
-			Cipher:      v.settings.Cipher,
-			Compression: &v.settings.Compression,
-			KDF:         ensureKDFSalt(v.settings.KDF),
-		}
-		if opts.Version == 0 {
-			opts.Version = kdbx.FileVersion41
-		}
-		if opts.KDF == nil {
-			opts.KDF = kdbx.DefaultKDFParams()
-		}
-		if err := kdbx.SaveFile(path, v.db, v.key, opts); err != nil {
-			return err
-		}
+		options.Compression = gkdb.CompressionNone
+	}
+	if v.settings.KDF != nil {
+		options.KDF = ensureKDFSalt(v.settings.KDF)
+	}
+	if err := gkdb.SaveFile(path, v.db, v.key, options); err != nil {
+		return err
 	}
 	v.dirty = false
 	v.lastSaved = time.Now()
@@ -409,7 +362,7 @@ func (v *Vault) saveLocked(path string) error {
 }
 
 // ChangeKey re-encrypts the database with new credentials.
-func (v *Vault) ChangeKey(newKey kdbx.Key) error {
+func (v *Vault) ChangeKey(newKey dbdoc.Key) error {
 	v.mu.Lock()
 	defer v.mu.Unlock()
 	if v.db == nil {
@@ -427,7 +380,7 @@ func (v *Vault) ChangeKey(newKey kdbx.Key) error {
 }
 
 // Database returns the underlying database. Callers must not retain it.
-func (v *Vault) Database() *kdbx.Database {
+func (v *Vault) Database() *dbdoc.Database {
 	v.mu.Lock()
 	defer v.mu.Unlock()
 	return v.db
@@ -467,26 +420,16 @@ func (v *Vault) Info() DatabaseInfo {
 	if info.GroupCount < 0 {
 		info.GroupCount = 0
 	}
-	if v.settings.Format == FormatGoKeep {
-		info.Format = FormatGoKeep
-		info.FormatName = "GoKeep v1"
-		info.VersionLabel = "GoKeep v1"
-	} else {
-		info.Format = FormatKDBX
-		info.FormatName = versionLabel(v.settings.Version)
-		info.VersionLabel = versionLabel(v.settings.Version)
-	}
-	info.FileVersion = v.settings.Version
-	info.Cipher = cipherName(v.settings.Cipher)
-	if v.settings.Format == FormatGoKeep {
-		if v.settings.Cipher == kdbx.CipherChaCha20 {
-			info.Cipher = "ChaCha20-Poly1305"
-		} else {
-			info.Cipher = "AES-256-GCM"
-		}
+	info.Format = "gkdb"
+	info.FormatName = "GoKeep 1"
+	info.VersionLabel = "GoKeep 1"
+	info.FileVersion = uint32(gkdb.FormatVersion)
+	info.Cipher = "AES-256-GCM"
+	if v.settings.Cipher == dbdoc.CipherChaCha20 {
+		info.Cipher = "ChaCha20-Poly1305"
 	}
 	info.CipherUUID = v.settings.Cipher.Hex()
-	if v.settings.Compression == kdbx.CompressionGzip {
+	if v.settings.Compression == dbdoc.CompressionGzip {
 		info.Compression = "GZip"
 	} else {
 		info.Compression = "None"
@@ -494,11 +437,11 @@ func (v *Vault) Info() DatabaseInfo {
 	if v.settings.KDF != nil {
 		info.KDFName = v.settings.KDF.Name()
 		info.KDFUUID = v.settings.KDF.UUID().Hex()
-		info.KDFRounds = v.settings.KDF.Dict.GetUint64(kdbx.KdfParamRounds, 0)
-		info.KDFMemory = v.settings.KDF.Dict.GetUint64(kdbx.KdfParamMemory, 0)
-		info.KDFIterations = v.settings.KDF.Dict.GetUint64(kdbx.KdfParamIterations, 0)
-		info.KDFParallelism = v.settings.KDF.Dict.GetUint32(kdbx.KdfParamParallelism, 0)
-		info.KDFSeed = fmt.Sprintf("%x", v.settings.KDF.Dict.GetBytes(kdbx.KdfParamSeed))
+		info.KDFRounds = v.settings.KDF.Dict.GetUint64(dbdoc.KdfParamRounds, 0)
+		info.KDFMemory = v.settings.KDF.Dict.GetUint64(dbdoc.KdfParamMemory, 0)
+		info.KDFIterations = v.settings.KDF.Dict.GetUint64(dbdoc.KdfParamIterations, 0)
+		info.KDFParallelism = v.settings.KDF.Dict.GetUint32(dbdoc.KdfParamParallelism, 0)
+		info.KDFSeed = fmt.Sprintf("%x", v.settings.KDF.Dict.GetBytes(dbdoc.KdfParamSeed))
 		info.SecurityLevel = securityLevel(v.settings.KDF)
 	}
 	for _, icon := range db.Meta.CustomIcons {
@@ -561,19 +504,19 @@ func (v *Vault) AllEntries(includeRecycled bool) ([]EntrySummary, error) {
 	return v.collectSummaries(v.db.Root, true, includeRecycled), nil
 }
 
-func (v *Vault) collectSummaries(group *kdbx.Group, recursive, includeRecycled bool) []EntrySummary {
+func (v *Vault) collectSummaries(group *dbdoc.Group, recursive, includeRecycled bool) []EntrySummary {
 	var out []EntrySummary
 	// Listing the recycle bin itself always shows its content, so that clicking the bin
 	// in the tree lists the deleted entries.
 	if isInRecycleBin(v.db, group) {
 		includeRecycled = true
 	}
-	var walkEntries func(g *kdbx.Group)
-	walkEntries = func(g *kdbx.Group) {
+	var walkEntries func(g *dbdoc.Group)
+	walkEntries = func(g *dbdoc.Group) {
 		if !includeRecycled && isInRecycleBin(v.db, g) {
 			return
 		}
-		entries := append([]*kdbx.Entry(nil), g.Entries...)
+		entries := append([]*dbdoc.Entry(nil), g.Entries...)
 		sortEntriesByTitle(entries)
 		for _, e := range entries {
 			out = append(out, entryToSummary(v.db, e, g))
@@ -581,8 +524,8 @@ func (v *Vault) collectSummaries(group *kdbx.Group, recursive, includeRecycled b
 	}
 	walkEntries(group)
 	if recursive {
-		var walkGroups func(g *kdbx.Group)
-		walkGroups = func(g *kdbx.Group) {
+		var walkGroups func(g *dbdoc.Group)
+		walkGroups = func(g *dbdoc.Group) {
 			for _, sub := range g.Groups {
 				walkEntries(sub)
 				walkGroups(sub)
@@ -610,11 +553,11 @@ func (v *Vault) Entry(id string) (EntryDTO, error) {
 }
 
 // findGroupLocked resolves a group id, accepting both the hex and the base64 form.
-func (v *Vault) findGroupLocked(id string) (*kdbx.Group, error) {
+func (v *Vault) findGroupLocked(id string) (*dbdoc.Group, error) {
 	if id == "" {
 		return v.db.Root, nil
 	}
-	uuid, err := kdbx.ParseUUID(id)
+	uuid, err := dbdoc.ParseUUID(id)
 	if err != nil {
 		return nil, err
 	}
@@ -628,8 +571,8 @@ func (v *Vault) findGroupLocked(id string) (*kdbx.Group, error) {
 	return g, nil
 }
 
-func (v *Vault) findEntryLocked(id string) (*kdbx.Entry, *kdbx.Group, error) {
-	uuid, err := kdbx.ParseUUID(id)
+func (v *Vault) findEntryLocked(id string) (*dbdoc.Entry, *dbdoc.Group, error) {
+	uuid, err := dbdoc.ParseUUID(id)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -649,35 +592,24 @@ func fileModTime(path string) time.Time {
 	return time.Time{}
 }
 
-func versionLabel(v uint32) string {
-	switch v {
-	case kdbx.FileVersion31:
-		return "KDBX 3.1"
-	case kdbx.FileVersion4:
-		return "KDBX 4.0"
-	default:
-		return "KDBX 4.1"
-	}
-}
-
-func cipherName(u kdbx.UUID) string {
+func cipherName(u dbdoc.UUID) string {
 	switch u {
-	case kdbx.CipherAES256:
+	case dbdoc.CipherAES256:
 		return "AES-256"
-	case kdbx.CipherChaCha20:
+	case dbdoc.CipherChaCha20:
 		return "ChaCha20"
-	case kdbx.CipherTwoFish:
+	case dbdoc.CipherTwoFish:
 		return "Twofish"
 	}
 	return "Unknown"
 }
 
 // securityLevel gives the user a rough idea how expensive the KDF is.
-func securityLevel(kdf *kdbx.KDFParams) string {
+func securityLevel(kdf *dbdoc.KDFParams) string {
 	switch kdf.Name() {
 	case "Argon2d", "Argon2id":
-		mem := kdf.Dict.GetUint64(kdbx.KdfParamMemory, 0)
-		iter := kdf.Dict.GetUint64(kdbx.KdfParamIterations, 0)
+		mem := kdf.Dict.GetUint64(dbdoc.KdfParamMemory, 0)
+		iter := kdf.Dict.GetUint64(dbdoc.KdfParamIterations, 0)
 		switch {
 		case mem >= 128*1024*1024 || iter >= 6:
 			return "very strong"
@@ -689,7 +621,7 @@ func securityLevel(kdf *kdbx.KDFParams) string {
 			return "weak"
 		}
 	case "AES-KDF":
-		rounds := kdf.Dict.GetUint64(kdbx.KdfParamRounds, 0)
+		rounds := kdf.Dict.GetUint64(dbdoc.KdfParamRounds, 0)
 		switch {
 		case rounds >= 200_000_000:
 			return "very strong"

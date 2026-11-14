@@ -4,7 +4,7 @@ import (
 	"regexp"
 	"strings"
 
-	"gokeep/internal/kdbx"
+	"gokeep/internal/dbdoc"
 )
 
 // SearchOptions mirrors the options of the KeePass quick search and the "find" dialog.
@@ -41,7 +41,7 @@ func (v *Vault) Search(opts SearchOptions) ([]EntrySummary, error) {
 	if err != nil {
 		return nil, err
 	}
-	var group *kdbx.Group
+	var group *dbdoc.Group
 	if !opts.SearchInAllGroups {
 		group, err = v.findGroupLocked(opts.GroupID)
 		if err != nil {
@@ -61,7 +61,7 @@ func (v *Vault) Search(opts SearchOptions) ([]EntrySummary, error) {
 	searchAll := len(fields) == 0
 
 	var out []EntrySummary
-	group.Walk(func(g *kdbx.Group) {
+	group.Walk(func(g *dbdoc.Group) {
 		if !opts.IncludeRecycled && isInRecycleBin(v.db, g) {
 			return
 		}
@@ -70,7 +70,7 @@ func (v *Vault) Search(opts SearchOptions) ([]EntrySummary, error) {
 				out = append(out, entryToSummary(v.db, e, g))
 			}
 		}
-	}, func(*kdbx.Entry) {})
+	}, func(*dbdoc.Entry) {})
 	return out, nil
 }
 
@@ -114,7 +114,7 @@ func (m *matcher) matches(value string) bool {
 }
 
 // entryMatches checks the standard fields, the tags and the custom fields.
-func (m *matcher) entryMatches(e *kdbx.Entry, fields map[string]bool, all, includeProtected bool) bool {
+func (m *matcher) entryMatches(e *dbdoc.Entry, fields map[string]bool, all, includeProtected bool) bool {
 	for _, f := range e.Strings {
 		if !all && !fields[f.Key] {
 			continue
@@ -153,12 +153,12 @@ func (v *Vault) FindDuplicates() ([][]EntrySummary, error) {
 	}
 	byPassword := map[string][]EntrySummary{}
 	var order []string
-	v.db.Root.Walk(func(g *kdbx.Group) {
+	v.db.Root.Walk(func(g *dbdoc.Group) {
 		if isInRecycleBin(v.db, g) {
 			return
 		}
 		for _, e := range g.Entries {
-			password, _ := e.Field(kdbx.FieldPassword)
+			password, _ := e.Field(dbdoc.FieldPassword)
 			if strings.TrimSpace(password) == "" {
 				continue
 			}
@@ -167,7 +167,7 @@ func (v *Vault) FindDuplicates() ([][]EntrySummary, error) {
 			}
 			byPassword[password] = append(byPassword[password], entryToSummary(v.db, e, g))
 		}
-	}, func(*kdbx.Entry) {})
+	}, func(*dbdoc.Entry) {})
 	var out [][]EntrySummary
 	for _, key := range order {
 		if len(byPassword[key]) > 1 {
@@ -185,7 +185,7 @@ func (v *Vault) ExpiredEntries() ([]EntrySummary, error) {
 		return nil, ErrLocked
 	}
 	var out []EntrySummary
-	v.db.Root.Walk(func(g *kdbx.Group) {
+	v.db.Root.Walk(func(g *dbdoc.Group) {
 		if isInRecycleBin(v.db, g) {
 			return
 		}
@@ -194,6 +194,6 @@ func (v *Vault) ExpiredEntries() ([]EntrySummary, error) {
 				out = append(out, entryToSummary(v.db, e, g))
 			}
 		}
-	}, func(*kdbx.Entry) {})
+	}, func(*dbdoc.Entry) {})
 	return out, nil
 }

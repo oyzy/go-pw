@@ -1,15 +1,14 @@
-// Package gkdb implements the native GoKeep database format.
+// Package gkdb implements the GoKeep database format.
 //
-// The format is deliberately simple and modern instead of being byte compatible with
-// KeePass:
+// The container is deliberately simple:
 //
 //	magic "GKDB" | header | nonce | payload length | AEAD ciphertext (JSON document)
 //
 // Everything up to (and including) the payload length is authenticated as associated
 // data, so header tampering is detected, and the document itself is sealed with
 // AES-256-GCM or ChaCha20-Poly1305 using a key derived by Argon2d, Argon2id or AES-KDF.
-// The document model is shared with the KDBX implementation, which means the same
-// application data (groups, entries, history, attachments, recycle bin, ...) is stored.
+// The document inside carries the whole database: groups, entries, custom fields,
+// attachments, history, tags and the recycle bin.
 package gkdb
 
 import (
@@ -27,7 +26,7 @@ import (
 
 	"golang.org/x/crypto/chacha20poly1305"
 
-	"gokeep/internal/kdbx"
+	"gokeep/internal/dbdoc"
 )
 
 // Extension is the file extension of GoKeep databases.
@@ -64,14 +63,18 @@ const (
 // ErrWrongKey is returned when the database cannot be decrypted.
 var ErrWrongKey = errors.New("gkdb: the master key is wrong or the file is corrupted")
 
+// ErrNotDatabase is returned when the bytes are not a GoKeep container at all, so the
+// caller can tell "wrong password" and "wrong file" apart without reading the text.
+var ErrNotDatabase = errors.New("gkdb: not a GoKeep database file (bad signature)")
+
 // Options controls how a database is written.
 type Options struct {
 	// Cipher defaults to AES-256-GCM.
 	Cipher byte
 	// Compression defaults to CompressionGzip.
 	Compression uint16
-	// KDF defaults to Argon2d with the KeePass defaults.
-	KDF *kdbx.KDFParams
+	// KDF defaults to Argon2id with 64 MiB of memory, two iterations and two lanes.
+	KDF *dbdoc.KDFParams
 	// Generator is stored in the document for information.
 	Generator string
 }
@@ -81,18 +84,40 @@ func DefaultOptions() Options {
 	return Options{
 		Cipher:      CipherAES256GCM,
 		Compression: CompressionGzip,
-		KDF:         kdbx.DefaultKDFParams(),
+		KDF:         DefaultKDFParams(),
 		Generator:   "GoKeep",
 	}
 }
 
+// DefaultKDFParams is how the master key of a new database is derived: Argon2id with
+// 64 MiB of memory, two iterations and two lanes. It costs a fraction of a second on
+// current hardware and matches the parameters the Argon2 authors recommend.
+func DefaultKDFParams() *dbdoc.KDFParams {
+	params := dbdoc.NewKDFParams(dbdoc.KDFArgon2id)
+	params.Dict.SetBytes(dbdoc.KdfParamSeed, randomSalt())
+	params.Dict.SetUint64(dbdoc.KdfParamMemory, 64*1024*1024)
+	params.Dict.SetUint64(dbdoc.KdfParamIterations, 2)
+	params.Dict.SetUint32(dbdoc.KdfParamParallelism, 2)
+	params.Dict.SetUint32(dbdoc.KdfParamVersion, 0x13)
+	return params
+}
+
+// randomSalt returns the 32 random bytes a key derivation starts from.
+func randomSalt() []byte {
+	salt := make([]byte, 32)
+	if _, err := rand.Read(salt); err != nil {
+		panic("gkdb: cannot read random bytes: " + err.Error())
+	}
+	return salt
+}
+
 // envelope is the plaintext document stored inside the encrypted payload.
 type envelope struct {
-	Format    string         `json:"format"`
-	Version   int            `json:"version"`
-	Generator string         `json:"generator"`
-	Modified  time.Time      `json:"modified"`
-	Database  *kdbx.Database `json:"database"`
+	Format    string          `json:"format"`
+	Version   int             `json:"version"`
+	Generator string          `json:"generator"`
+	Modified  time.Time       `json:"modified"`
+	Database  *dbdoc.Database `json:"database"`
 }
 
 // IsGoKeepFile reports whether the data starts with the GoKeep signature.
@@ -117,38 +142,38 @@ type header struct {
 	raw         []byte
 }
 
-// kdfParams rebuilds the KeePass style KDF parameters from the header so the existing
-// derivation code can be reused.
-func (h *header) kdfParams() *kdbx.KDFParams {
-	var params *kdbx.KDFParams
+// kdfParams rebuilds the KDF parameters from the header so the shared derivation code
+// in internal/dbdoc can be used.
+func (h *header) kdfParams() *dbdoc.KDFParams {
+	var params *dbdoc.KDFParams
 	switch h.kdfID {
 	case KDFArgon2d:
-		params = kdbx.NewKDFParams(kdbx.KDFArgon2d)
+		params = dbdoc.NewKDFParams(dbdoc.KDFArgon2d)
 	case KDFArgon2id:
-		params = kdbx.NewKDFParams(kdbx.KDFArgon2id)
+		params = dbdoc.NewKDFParams(dbdoc.KDFArgon2id)
 	default:
-		params = kdbx.NewKDFParams(kdbx.KDFAES)
+		params = dbdoc.NewKDFParams(dbdoc.KDFAES)
 	}
-	params.Dict.SetBytes(kdbx.KdfParamSeed, h.salt)
+	params.Dict.SetBytes(dbdoc.KdfParamSeed, h.salt)
 	switch h.kdfID {
 	case KDFAES:
-		params.Dict.SetUint64(kdbx.KdfParamRounds, h.rounds)
+		params.Dict.SetUint64(dbdoc.KdfParamRounds, h.rounds)
 	default:
-		params.Dict.SetUint64(kdbx.KdfParamMemory, h.memory)
-		params.Dict.SetUint64(kdbx.KdfParamIterations, uint64(h.iterations))
-		params.Dict.SetUint32(kdbx.KdfParamParallelism, h.parallelism)
-		params.Dict.SetUint32(kdbx.KdfParamVersion, h.argon2Ver)
+		params.Dict.SetUint64(dbdoc.KdfParamMemory, h.memory)
+		params.Dict.SetUint64(dbdoc.KdfParamIterations, uint64(h.iterations))
+		params.Dict.SetUint32(dbdoc.KdfParamParallelism, h.parallelism)
+		params.Dict.SetUint32(dbdoc.KdfParamVersion, h.argon2Ver)
 	}
 	return params
 }
 
-func kdfIDFor(params *kdbx.KDFParams) (byte, error) {
+func kdfIDFor(params *dbdoc.KDFParams) (byte, error) {
 	switch params.UUID() {
-	case kdbx.KDFArgon2d:
+	case dbdoc.KDFArgon2d:
 		return KDFArgon2d, nil
-	case kdbx.KDFArgon2id:
+	case dbdoc.KDFArgon2id:
 		return KDFArgon2id, nil
-	case kdbx.KDFAES:
+	case dbdoc.KDFAES:
 		return KDFAES, nil
 	}
 	return 0, fmt.Errorf("gkdb: unsupported key derivation function %s", params.UUID())
@@ -200,7 +225,7 @@ func Inspect(data []byte) (*Info, error) {
 
 func parseHeader(data []byte) (*header, error) {
 	if !IsGoKeepFile(data) {
-		return nil, errors.New("gkdb: not a GoKeep database file (bad signature)")
+		return nil, ErrNotDatabase
 	}
 	if len(data) < headerSize {
 		return nil, errors.New("gkdb: truncated header")
@@ -248,12 +273,12 @@ func (h *header) newAEAD(key []byte) (cipher.AEAD, error) {
 }
 
 // Save serialises and encrypts a database.
-func Save(db *kdbx.Database, key kdbx.Key, opts Options) ([]byte, error) {
+func Save(db *dbdoc.Database, key dbdoc.Key, opts Options) ([]byte, error) {
 	if opts.Cipher == 0 {
 		opts.Cipher = CipherAES256GCM
 	}
 	if opts.KDF == nil {
-		opts.KDF = kdbx.DefaultKDFParams()
+		opts.KDF = dbdoc.DefaultKDFParams()
 	}
 	if err := opts.KDF.Validate(); err != nil {
 		return nil, err
@@ -307,12 +332,12 @@ func Save(db *kdbx.Database, key kdbx.Key, opts Options) ([]byte, error) {
 	}
 	switch kdfID {
 	case KDFAES:
-		h.rounds = opts.KDF.Dict.GetUint64(kdbx.KdfParamRounds, 60000)
+		h.rounds = opts.KDF.Dict.GetUint64(dbdoc.KdfParamRounds, 60000)
 	default:
-		h.memory = opts.KDF.Dict.GetUint64(kdbx.KdfParamMemory, 64*1024*1024)
-		h.iterations = uint32(opts.KDF.Dict.GetUint64(kdbx.KdfParamIterations, 2))
-		h.parallelism = opts.KDF.Dict.GetUint32(kdbx.KdfParamParallelism, 2)
-		h.argon2Ver = opts.KDF.Dict.GetUint32(kdbx.KdfParamVersion, 0x13)
+		h.memory = opts.KDF.Dict.GetUint64(dbdoc.KdfParamMemory, 64*1024*1024)
+		h.iterations = uint32(opts.KDF.Dict.GetUint64(dbdoc.KdfParamIterations, 2))
+		h.parallelism = opts.KDF.Dict.GetUint32(dbdoc.KdfParamParallelism, 2)
+		h.argon2Ver = opts.KDF.Dict.GetUint32(dbdoc.KdfParamVersion, 0x13)
 	}
 
 	composite, err := key.CompositeKey()
@@ -341,7 +366,7 @@ func Save(db *kdbx.Database, key kdbx.Key, opts Options) ([]byte, error) {
 }
 
 // Load decrypts and parses a GoKeep database.
-func Load(data []byte, key kdbx.Key) (*kdbx.Database, error) {
+func Load(data []byte, key dbdoc.Key) (*dbdoc.Database, error) {
 	h, err := parseHeader(data)
 	if err != nil {
 		return nil, err
@@ -388,7 +413,7 @@ func Load(data []byte, key kdbx.Key) (*kdbx.Database, error) {
 }
 
 // SaveFile writes a database to disk.
-func SaveFile(path string, db *kdbx.Database, key kdbx.Key, opts Options) error {
+func SaveFile(path string, db *dbdoc.Database, key dbdoc.Key, opts Options) error {
 	data, err := Save(db, key, opts)
 	if err != nil {
 		return err
@@ -397,7 +422,7 @@ func SaveFile(path string, db *kdbx.Database, key kdbx.Key, opts Options) error 
 }
 
 // LoadFile reads a database from disk.
-func LoadFile(path string, key kdbx.Key) (*kdbx.Database, error) {
+func LoadFile(path string, key dbdoc.Key) (*dbdoc.Database, error) {
 	data, err := readFile(path)
 	if err != nil {
 		return nil, err

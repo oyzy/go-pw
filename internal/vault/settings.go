@@ -3,20 +3,17 @@ package vault
 import (
 	"crypto/rand"
 
-	"gokeep/internal/kdbx"
+	"gokeep/internal/dbdoc"
 )
 
 // DatabaseSettings is the editable part of the database metadata shown in the database
 // settings dialog.
 type DatabaseSettings struct {
-	// Format selects the file format: "kdbx" (KeePass compatible) or "gokeep" (native).
-	Format                 string `json:"format"`
 	Name                   string `json:"name"`
 	Description            string `json:"description"`
 	DefaultUserName        string `json:"defaultUserName"`
 	Cipher                 string `json:"cipher"`
 	Compression            string `json:"compression"`
-	FileVersion            uint32 `json:"fileVersion"`
 	KDFName                string `json:"kdfName"`
 	KDFRounds              uint64 `json:"kdfRounds"`
 	KDFMemory              uint64 `json:"kdfMemory"`
@@ -46,7 +43,6 @@ func (v *Vault) DatabaseSettings() (DatabaseSettings, error) {
 		Description:            db.Meta.DatabaseDescription,
 		DefaultUserName:        db.Meta.DefaultUserName,
 		Compression:            "GZip",
-		FileVersion:            v.settings.Version,
 		RecycleBinEnabled:      db.Meta.RecycleBinEnabled,
 		HistoryMaxItems:        db.Meta.HistoryMaxItems,
 		HistoryMaxSize:         db.Meta.HistoryMaxSize,
@@ -58,15 +54,15 @@ func (v *Vault) DatabaseSettings() (DatabaseSettings, error) {
 		ProtectNotes:           db.Meta.MemoryProtection.ProtectNotes,
 		Cipher:                 cipherName(v.settings.Cipher),
 	}
-	if v.settings.Compression == kdbx.CompressionNone {
+	if v.settings.Compression == dbdoc.CompressionNone {
 		settings.Compression = "None"
 	}
 	if v.settings.KDF != nil {
 		settings.KDFName = v.settings.KDF.Name()
-		settings.KDFRounds = v.settings.KDF.Dict.GetUint64(kdbx.KdfParamRounds, 0)
-		settings.KDFMemory = v.settings.KDF.Dict.GetUint64(kdbx.KdfParamMemory, 0)
-		settings.KDFIterations = v.settings.KDF.Dict.GetUint64(kdbx.KdfParamIterations, 0)
-		settings.KDFParallelism = v.settings.KDF.Dict.GetUint32(kdbx.KdfParamParallelism, 0)
+		settings.KDFRounds = v.settings.KDF.Dict.GetUint64(dbdoc.KdfParamRounds, 0)
+		settings.KDFMemory = v.settings.KDF.Dict.GetUint64(dbdoc.KdfParamMemory, 0)
+		settings.KDFIterations = v.settings.KDF.Dict.GetUint64(dbdoc.KdfParamIterations, 0)
+		settings.KDFParallelism = v.settings.KDF.Dict.GetUint32(dbdoc.KdfParamParallelism, 0)
 	}
 	return settings, nil
 }
@@ -90,7 +86,7 @@ func (v *Vault) ApplyDatabaseSettings(s DatabaseSettings) error {
 	db.Meta.HistoryMaxItems = s.HistoryMaxItems
 	db.Meta.HistoryMaxSize = s.HistoryMaxSize
 	db.Meta.MaintenanceHistoryDays = s.MaintenanceHistoryDays
-	db.Meta.MemoryProtection = kdbx.MemoryProtection{
+	db.Meta.MemoryProtection = dbdoc.MemoryProtection{
 		ProtectTitle:    s.ProtectTitle,
 		ProtectUserName: s.ProtectUserName,
 		ProtectPassword: s.ProtectPassword,
@@ -103,65 +99,49 @@ func (v *Vault) ApplyDatabaseSettings(s DatabaseSettings) error {
 	}
 	db.Meta.RecycleBinEnabled = s.RecycleBinEnabled
 	setRecycleBinDisabled(db, !s.RecycleBinEnabled)
-	v.applyFormatSettings(s)
+	v.applySecuritySettings(s)
 	v.touch()
 	return nil
 }
 
-// applyFormatSettings stores the cipher, compression, file version and key derivation
+// applySecuritySettings stores the cipher, the compression and the key derivation
 // function used for the next save. The caller must hold the lock.
-func (v *Vault) applyFormatSettings(s DatabaseSettings) {
-	if s.Format == FormatGoKeep || s.Format == FormatKDBX {
-		v.settings.Format = s.Format
-	}
-	if s.FileVersion != 0 {
-		v.settings.Version = s.FileVersion
-	}
+func (v *Vault) applySecuritySettings(s DatabaseSettings) {
 	switch s.Cipher {
 	case "ChaCha20", "ChaCha20-Poly1305":
-		v.settings.Cipher = kdbx.CipherChaCha20
+		v.settings.Cipher = dbdoc.CipherChaCha20
 	default:
-		v.settings.Cipher = kdbx.CipherAES256
+		v.settings.Cipher = dbdoc.CipherAES256
 	}
 	if s.Compression == "None" {
-		v.settings.Compression = kdbx.CompressionNone
+		v.settings.Compression = dbdoc.CompressionNone
 	} else {
-		v.settings.Compression = kdbx.CompressionGzip
+		v.settings.Compression = dbdoc.CompressionGzip
 	}
 	switch s.KDFName {
 	case "Argon2id":
-		p := newArgon2Params(kdbx.KDFArgon2id, s)
+		p := newArgon2Params(dbdoc.KDFArgon2id, s)
 		v.settings.KDF = p
 	case "AES-KDF":
-		p := kdbx.NewKDFParams(kdbx.KDFAES)
-		p.Dict.SetBytes(kdbx.KdfParamSeed, randomBytes(32))
-		p.Dict.SetUint64(kdbx.KdfParamRounds, maxU64(s.KDFRounds, 60000))
+		p := dbdoc.NewKDFParams(dbdoc.KDFAES)
+		p.Dict.SetBytes(dbdoc.KdfParamSeed, randomBytes(32))
+		p.Dict.SetUint64(dbdoc.KdfParamRounds, maxU64(s.KDFRounds, 60000))
 		v.settings.KDF = p
 	case "Argon2d":
-		v.settings.KDF = newArgon2Params(kdbx.KDFArgon2d, s)
+		v.settings.KDF = newArgon2Params(dbdoc.KDFArgon2d, s)
 	}
 	if v.settings.KDF == nil {
-		v.settings.KDF = kdbx.DefaultKDFParams()
-	}
-	// KDBX 3.1 predates ChaCha20 and Argon2, so those choices are downgraded.
-	if v.settings.Version < kdbx.FileVersion4 {
-		v.settings.Cipher = kdbx.CipherAES256
-		if v.settings.KDF.UUID() != kdbx.KDFAES {
-			p := kdbx.NewKDFParams(kdbx.KDFAES)
-			p.Dict.SetBytes(kdbx.KdfParamSeed, randomBytes(32))
-			p.Dict.SetUint64(kdbx.KdfParamRounds, maxU64(s.KDFRounds, 60000))
-			v.settings.KDF = p
-		}
+		v.settings.KDF = dbdoc.DefaultKDFParams()
 	}
 }
 
-func newArgon2Params(uuid kdbx.UUID, s DatabaseSettings) *kdbx.KDFParams {
-	p := kdbx.NewKDFParams(uuid)
-	p.Dict.SetBytes(kdbx.KdfParamSeed, randomBytes(32))
-	p.Dict.SetUint32(kdbx.KdfParamParallelism, maxU32(s.KDFParallelism, 1))
-	p.Dict.SetUint64(kdbx.KdfParamMemory, maxU64(s.KDFMemory, 8*1024*1024))
-	p.Dict.SetUint64(kdbx.KdfParamIterations, maxU64(s.KDFIterations, 1))
-	p.Dict.SetUint32(kdbx.KdfParamVersion, 0x13)
+func newArgon2Params(uuid dbdoc.UUID, s DatabaseSettings) *dbdoc.KDFParams {
+	p := dbdoc.NewKDFParams(uuid)
+	p.Dict.SetBytes(dbdoc.KdfParamSeed, randomBytes(32))
+	p.Dict.SetUint32(dbdoc.KdfParamParallelism, maxU32(s.KDFParallelism, 1))
+	p.Dict.SetUint64(dbdoc.KdfParamMemory, maxU64(s.KDFMemory, 8*1024*1024))
+	p.Dict.SetUint64(dbdoc.KdfParamIterations, maxU64(s.KDFIterations, 1))
+	p.Dict.SetUint32(dbdoc.KdfParamVersion, 0x13)
 	return p
 }
 
@@ -203,7 +183,7 @@ func (v *Vault) ApplyCreateOptions(s DatabaseSettings) error {
 	}
 	protection := db.Meta.MemoryProtection
 	if s.ProtectTitle || s.ProtectUserName || s.ProtectPassword || s.ProtectURL || s.ProtectNotes {
-		protection = kdbx.MemoryProtection{
+		protection = dbdoc.MemoryProtection{
 			ProtectTitle:    s.ProtectTitle,
 			ProtectUserName: s.ProtectUserName,
 			ProtectPassword: s.ProtectPassword,
@@ -214,7 +194,7 @@ func (v *Vault) ApplyCreateOptions(s DatabaseSettings) error {
 	db.Meta.MemoryProtection = protection
 	db.Meta.RecycleBinEnabled = true
 	db.Meta.SettingsChanged = now()
-	v.applyFormatSettings(s)
+	v.applySecuritySettings(s)
 	v.touch()
 	return nil
 }
@@ -231,21 +211,21 @@ const recycleBinDisabledKey = "gokeep.recycleBinDisabled"
 const recycleBinDisabledValue = "2"
 
 // recycleBinMarker returns the raw marker and whether it is present at all.
-func recycleBinMarker(db *kdbx.Database) (string, bool) {
-	return kdbx.CustomDataValue(db.Meta.CustomData, recycleBinDisabledKey)
+func recycleBinMarker(db *dbdoc.Database) (string, bool) {
+	return dbdoc.CustomDataValue(db.Meta.CustomData, recycleBinDisabledKey)
 }
 
 // recycleBinDisabled reports whether the user explicitly disabled the recycle bin.
-func recycleBinDisabled(db *kdbx.Database) bool {
+func recycleBinDisabled(db *dbdoc.Database) bool {
 	value, ok := recycleBinMarker(db)
 	return ok && value == recycleBinDisabledValue
 }
 
 // setRecycleBinDisabled stores the explicit choice.
-func setRecycleBinDisabled(db *kdbx.Database, disabled bool) {
+func setRecycleBinDisabled(db *dbdoc.Database, disabled bool) {
 	if disabled {
-		db.Meta.CustomData = kdbx.SetCustomDataValue(db.Meta.CustomData, recycleBinDisabledKey, recycleBinDisabledValue)
+		db.Meta.CustomData = dbdoc.SetCustomDataValue(db.Meta.CustomData, recycleBinDisabledKey, recycleBinDisabledValue)
 		return
 	}
-	db.Meta.CustomData, _ = kdbx.RemoveCustomData(db.Meta.CustomData, recycleBinDisabledKey)
+	db.Meta.CustomData, _ = dbdoc.RemoveCustomData(db.Meta.CustomData, recycleBinDisabledKey)
 }

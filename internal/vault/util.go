@@ -5,108 +5,81 @@ import (
 	"os"
 	"time"
 
+	"gokeep/internal/dbdoc"
 	"gokeep/internal/gkdb"
-	"gokeep/internal/kdbx"
 )
 
 func base64Encode(data []byte) string { return base64.StdEncoding.EncodeToString(data) }
 
-// settingsFromFile reads the on-disk format of an existing file so that saving keeps the
-// cipher, the key derivation function and the file version the user chose earlier. All
-// of it lives in the header, so nothing has to be decrypted to read it back.
+// settingsFromFile reads the on-disk settings of an existing database so that saving
+// keeps the cipher, the compression and the key derivation function the user chose
+// earlier. All of it lives in the header, so nothing has to be decrypted to read it
+// back, and a file that cannot be read at all simply falls back to the defaults.
 func settingsFromFile(path string) SaveSettings {
-	// The native format first: it has its own header with the same kind of information.
-	if data, err := os.ReadFile(path); err == nil && gkdb.IsGoKeepFile(data) {
-		settings := DefaultSaveSettings()
-		settings.Format = FormatGoKeep
-		if info, err := gkdb.Inspect(data); err == nil {
-			settings.Compression = kdbx.CompressionGzip
-			if info.Compression == "None" {
-				settings.Compression = kdbx.CompressionNone
-			}
-			if info.Cipher == "ChaCha20-Poly1305" {
-				settings.Cipher = kdbx.CipherChaCha20
-			}
-			kdf := kdbx.NewKDFParams(kdbx.KDFArgon2d)
-			switch info.KDF {
-			case "Argon2id":
-				kdf = kdbx.NewKDFParams(kdbx.KDFArgon2id)
-			case "AES-KDF":
-				kdf = kdbx.NewKDFParams(kdbx.KDFAES)
-			}
-			kdf.Dict.SetUint64(kdbx.KdfParamRounds, info.KDFRounds)
-			kdf.Dict.SetUint64(kdbx.KdfParamMemory, info.KDFMemory)
-			kdf.Dict.SetUint64(kdbx.KdfParamIterations, uint64(info.KDFIterations))
-			kdf.Dict.SetUint32(kdbx.KdfParamParallelism, info.KDFParallelism)
-			kdf.Dict.SetUint32(kdbx.KdfParamVersion, 0x13)
-			// The KDF salt is not exposed by Inspect on purpose (it is only needed when
-			// decrypting), and a save always generates a fresh one.
-			settings.KDF = kdf
-		}
+	settings := DefaultSaveSettings()
+	data, err := os.ReadFile(path)
+	if err != nil || !gkdb.IsGoKeepFile(data) {
 		return settings
 	}
-	info, err := kdbx.InspectFile(path)
+	info, err := gkdb.Inspect(data)
 	if err != nil {
-		return DefaultSaveSettings()
+		return settings
 	}
-	kdf := kdbx.NewKDFParams(info.KDFUUID)
-	kdf.Dict.SetBytes(kdbx.KdfParamSeed, info.KDFSalt)
-	switch info.KDFName {
-	case "Argon2d", "Argon2id":
-		kdf.Dict.SetUint64(kdbx.KdfParamMemory, info.KDFMemory)
-		kdf.Dict.SetUint64(kdbx.KdfParamIterations, info.KDFIterations)
-		kdf.Dict.SetUint32(kdbx.KdfParamParallelism, info.KDFParallel)
-		kdf.Dict.SetUint32(kdbx.KdfParamVersion, 0x13)
+	settings.Compression = dbdoc.CompressionNone
+	if info.Compression == "GZip" {
+		settings.Compression = dbdoc.CompressionGzip
+	}
+	if info.Cipher == "ChaCha20-Poly1305" {
+		settings.Cipher = dbdoc.CipherChaCha20
+	}
+	kdf := dbdoc.NewKDFParams(dbdoc.KDFArgon2d)
+	switch info.KDF {
+	case "Argon2id":
+		kdf = dbdoc.NewKDFParams(dbdoc.KDFArgon2id)
 	case "AES-KDF":
-		kdf.Dict.SetUint64(kdbx.KdfParamRounds, info.KDFRounds)
+		kdf = dbdoc.NewKDFParams(dbdoc.KDFAES)
 	}
-	settings := SaveSettings{
-		Version:     info.Version,
-		Cipher:      info.CipherUUID,
-		Compression: info.Compression,
-		KDF:         kdf,
-	}
-	if settings.Version == 0 {
-		settings.Version = kdbx.FileVersion41
-	}
-	if settings.Cipher.IsZero() {
-		settings.Cipher = kdbx.CipherAES256
-	}
+	kdf.Dict.SetUint64(dbdoc.KdfParamRounds, info.KDFRounds)
+	kdf.Dict.SetUint64(dbdoc.KdfParamMemory, info.KDFMemory)
+	kdf.Dict.SetUint64(dbdoc.KdfParamIterations, uint64(info.KDFIterations))
+	kdf.Dict.SetUint32(dbdoc.KdfParamParallelism, info.KDFParallelism)
+	kdf.Dict.SetUint32(dbdoc.KdfParamVersion, 0x13)
+	// The KDF salt is not exposed by Inspect on purpose (it is only needed when
+	// decrypting), and a save always generates a fresh one.
+	settings.KDF = kdf
 	return settings
 }
 
-// now returns the current time truncated to whole seconds, like KeePass does.
-func now() time.Time { return time.Now().UTC().Truncate(time.Second) }
-
-// ensureKDFSalt returns KDF parameters that are safe to write: parameters loaded from an
-// existing file may not carry a salt (the native format keeps it in the header), so a
-// fresh random one is generated in that case. A new salt is also what KeePass does when
-// the parameters change.
-func ensureKDFSalt(params *kdbx.KDFParams) *kdbx.KDFParams {
+// ensureKDFSalt returns KDF parameters that are safe to write: parameters read back from
+// the header of an existing database do not carry the salt of that file, so a fresh
+// random one is generated here.
+func ensureKDFSalt(params *dbdoc.KDFParams) *dbdoc.KDFParams {
 	if params == nil {
-		return kdbx.DefaultKDFParams()
+		return gkdb.DefaultKDFParams()
 	}
-	if len(params.Dict.GetBytes(kdbx.KdfParamSeed)) >= 32 {
+	if len(params.Dict.GetBytes(dbdoc.KdfParamSeed)) >= 32 {
 		return params
 	}
-	clone := kdbx.NewKDFParams(params.UUID())
+	clone := dbdoc.NewKDFParams(params.UUID())
 	for _, key := range params.Dict.Keys() {
 		switch key {
-		case kdbx.KdfParamUUID, kdbx.KdfParamSeed:
+		case dbdoc.KdfParamUUID, dbdoc.KdfParamSeed:
 			continue
-		case kdbx.KdfParamRounds:
+		case dbdoc.KdfParamRounds, dbdoc.KdfParamMemory, dbdoc.KdfParamIterations:
 			clone.Dict.SetUint64(key, params.Dict.GetUint64(key, 0))
-		case kdbx.KdfParamMemory, kdbx.KdfParamIterations:
-			clone.Dict.SetUint64(key, params.Dict.GetUint64(key, 0))
-		case kdbx.KdfParamParallelism, kdbx.KdfParamVersion:
+		case dbdoc.KdfParamParallelism, dbdoc.KdfParamVersion:
 			clone.Dict.SetUint32(key, params.Dict.GetUint32(key, 0))
-		case kdbx.KdfParamSecretKey, kdbx.KdfParamAssocData:
+		case dbdoc.KdfParamSecretKey, dbdoc.KdfParamAssocData:
 			clone.Dict.SetBytes(key, params.Dict.GetBytes(key))
 		}
 	}
-	clone.Dict.SetBytes(kdbx.KdfParamSeed, randomBytes(32))
-	if clone.UUID() == kdbx.KDFAES && clone.Dict.GetUint64(kdbx.KdfParamRounds, 0) == 0 {
-		clone.Dict.SetUint64(kdbx.KdfParamRounds, 60000)
+	clone.Dict.SetBytes(dbdoc.KdfParamSeed, randomBytes(32))
+	if clone.UUID() == dbdoc.KDFAES && clone.Dict.GetUint64(dbdoc.KdfParamRounds, 0) == 0 {
+		clone.Dict.SetUint64(dbdoc.KdfParamRounds, 60000)
 	}
 	return clone
 }
+
+// now returns the current time truncated to whole seconds, the resolution the document
+// model stores timestamps with.
+func now() time.Time { return time.Now().UTC().Truncate(time.Second) }

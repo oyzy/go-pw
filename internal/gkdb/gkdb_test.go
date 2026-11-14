@@ -6,20 +6,20 @@ import (
 	"testing"
 	"time"
 
-	"gokeep/internal/kdbx"
+	"gokeep/internal/dbdoc"
 )
 
-func testDatabase() *kdbx.Database {
-	db := kdbx.NewDatabase("Native DB", "user")
+func testDatabase() *dbdoc.Database {
+	db := dbdoc.NewDatabase("Native DB", "user")
 	root := db.RootGroup()
-	group := kdbx.NewGroup("General")
+	group := dbdoc.NewGroup("General")
 	root.Groups = append(root.Groups, group)
 
-	entry := kdbx.NewEntry()
-	entry.SetField(kdbx.FieldTitle, "Example", false)
-	entry.SetField(kdbx.FieldUserName, "octocat", false)
-	entry.SetField(kdbx.FieldPassword, "s3cret-pässword", true)
-	entry.SetField(kdbx.FieldNotes, "line one\nline two", false)
+	entry := dbdoc.NewEntry()
+	entry.SetField(dbdoc.FieldTitle, "Example", false)
+	entry.SetField(dbdoc.FieldUserName, "octocat", false)
+	entry.SetField(dbdoc.FieldPassword, "s3cret-pässword", true)
+	entry.SetField(dbdoc.FieldNotes, "line one\nline two", false)
 	entry.SetField("PIN", "4242", true)
 	entry.AddTag("work")
 	entry.IconID = 12
@@ -28,35 +28,35 @@ func testDatabase() *kdbx.Database {
 	group.Entries = append(group.Entries, entry)
 
 	pool := db.AddBinary([]byte("attachment payload"), false)
-	entry.Binaries = append(entry.Binaries, kdbx.BinaryRef{Key: "data.bin", Pool: pool})
+	entry.Binaries = append(entry.Binaries, dbdoc.BinaryRef{Key: "data.bin", Pool: pool})
 	backup := entry.CloneWithoutHistory()
-	backup.SetField(kdbx.FieldPassword, "old-password", true)
-	entry.History = []*kdbx.Entry{backup}
+	backup.SetField(dbdoc.FieldPassword, "old-password", true)
+	entry.History = []*dbdoc.Entry{backup}
 
-	db.Meta.CustomIcons = append(db.Meta.CustomIcons, kdbx.CustomIcon{UUID: kdbx.NewUUID(), Data: []byte{1, 2, 3}})
-	db.DeletedObjects = append(db.DeletedObjects, kdbx.DeletedObject{UUID: kdbx.NewUUID(), DeletionTime: time.Now().UTC()})
+	db.Meta.CustomIcons = append(db.Meta.CustomIcons, dbdoc.CustomIcon{UUID: dbdoc.NewUUID(), Data: []byte{1, 2, 3}})
+	db.DeletedObjects = append(db.DeletedObjects, dbdoc.DeletedObject{UUID: dbdoc.NewUUID(), DeletionTime: time.Now().UTC()})
 	return db
 }
 
 func TestRoundTrip(t *testing.T) {
-	key := kdbx.Key{Password: "master-password"}
+	key := dbdoc.Key{Password: "master-password"}
 	cases := []struct {
 		name        string
 		cipher      byte
 		compression uint16
-		kdf         *kdbx.KDFParams
+		kdf         *dbdoc.KDFParams
 	}{
-		{"gcm+gzip+argon2d", CipherAES256GCM, CompressionGzip, kdbx.DefaultKDFParams()},
-		{"chacha+none+argon2id", CipherChaCha20Poly1305, CompressionNone, func() *kdbx.KDFParams {
-			params := kdbx.NewKDFParams(kdbx.KDFArgon2id)
-			params.Dict.SetBytes(kdbx.KdfParamSeed, bytes.Repeat([]byte{9}, 32))
-			params.Dict.SetUint32(kdbx.KdfParamParallelism, 2)
-			params.Dict.SetUint64(kdbx.KdfParamMemory, 16*1024*1024)
-			params.Dict.SetUint64(kdbx.KdfParamIterations, 2)
-			params.Dict.SetUint32(kdbx.KdfParamVersion, 0x13)
+		{"gcm+gzip+argon2d", CipherAES256GCM, CompressionGzip, dbdoc.DefaultKDFParams()},
+		{"chacha+none+argon2id", CipherChaCha20Poly1305, CompressionNone, func() *dbdoc.KDFParams {
+			params := dbdoc.NewKDFParams(dbdoc.KDFArgon2id)
+			params.Dict.SetBytes(dbdoc.KdfParamSeed, bytes.Repeat([]byte{9}, 32))
+			params.Dict.SetUint32(dbdoc.KdfParamParallelism, 2)
+			params.Dict.SetUint64(dbdoc.KdfParamMemory, 16*1024*1024)
+			params.Dict.SetUint64(dbdoc.KdfParamIterations, 2)
+			params.Dict.SetUint32(dbdoc.KdfParamVersion, 0x13)
 			return params
 		}()},
-		{"gcm+aeskdf", CipherAES256GCM, CompressionGzip, kdbx.DefaultAESKDFParams()},
+		{"gcm+aeskdf", CipherAES256GCM, CompressionGzip, dbdoc.DefaultAESKDFParams()},
 	}
 
 	for _, tc := range cases {
@@ -68,27 +68,24 @@ func TestRoundTrip(t *testing.T) {
 			if !IsGoKeepFile(data) {
 				t.Fatal("the file does not carry the GoKeep signature")
 			}
-			if _, err := kdbx.Load(data, key); err == nil {
-				t.Fatal("the native format must not be readable as a KDBX file")
-			}
 			db, err := Load(data, key)
 			if err != nil {
 				t.Fatalf("Load: %v", err)
 			}
 			entry := db.Root.FindGroupByName("General").Entries[0]
-			if got, _ := entry.Field(kdbx.FieldPassword); got != "s3cret-pässword" {
+			if got, _ := entry.Field(dbdoc.FieldPassword); got != "s3cret-pässword" {
 				t.Errorf("password = %q", got)
 			}
 			if got, _ := entry.Field("PIN"); got != "4242" || !entry.IsFieldProtected("PIN") {
 				t.Errorf("custom protected field = %q protected=%v", got, entry.IsFieldProtected("PIN"))
 			}
-			if got, _ := entry.Field(kdbx.FieldNotes); got != "line one\nline two" {
+			if got, _ := entry.Field(dbdoc.FieldNotes); got != "line one\nline two" {
 				t.Errorf("notes = %q", got)
 			}
 			if len(entry.History) != 1 {
 				t.Fatalf("history = %d", len(entry.History))
 			}
-			if got, _ := entry.History[0].Field(kdbx.FieldPassword); got != "old-password" {
+			if got, _ := entry.History[0].Field(dbdoc.FieldPassword); got != "old-password" {
 				t.Errorf("history password = %q", got)
 			}
 			if len(entry.Binaries) != 1 {
@@ -108,14 +105,14 @@ func TestRoundTrip(t *testing.T) {
 }
 
 func TestWrongKeyIsRejected(t *testing.T) {
-	data, err := Save(testDatabase(), kdbx.Key{Password: "right"}, DefaultOptions())
+	data, err := Save(testDatabase(), dbdoc.Key{Password: "right"}, DefaultOptions())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := Load(data, kdbx.Key{Password: "wrong"}); err == nil {
+	if _, err := Load(data, dbdoc.Key{Password: "wrong"}); err == nil {
 		t.Fatal("a wrong password must be rejected")
 	}
-	if _, err := Load(data, kdbx.Key{}); err == nil {
+	if _, err := Load(data, dbdoc.Key{}); err == nil {
 		t.Fatal("missing credentials must be rejected")
 	}
 }
@@ -123,7 +120,7 @@ func TestWrongKeyIsRejected(t *testing.T) {
 // TestTamperingIsDetected flips bits in every part of the container; the authenticated
 // encryption has to notice each of them.
 func TestTamperingIsDetected(t *testing.T) {
-	key := kdbx.Key{Password: "right"}
+	key := dbdoc.Key{Password: "right"}
 	original, err := Save(testDatabase(), key, DefaultOptions())
 	if err != nil {
 		t.Fatal(err)
@@ -156,11 +153,11 @@ func TestTamperingIsDetected(t *testing.T) {
 }
 
 func TestKeyFileAndInspect(t *testing.T) {
-	keyFile, err := kdbx.CreateKeyFile()
+	keyFile, err := dbdoc.CreateKeyFile()
 	if err != nil {
 		t.Fatal(err)
 	}
-	key := kdbx.Key{Password: "pw", KeyFile: keyFile}
+	key := dbdoc.Key{Password: "pw", KeyFile: keyFile}
 	data, err := Save(testDatabase(), key, DefaultOptions())
 	if err != nil {
 		t.Fatal(err)
@@ -168,7 +165,7 @@ func TestKeyFileAndInspect(t *testing.T) {
 	if _, err := Load(data, key); err != nil {
 		t.Fatalf("loading with a key file failed: %v", err)
 	}
-	if _, err := Load(data, kdbx.Key{Password: "pw"}); err == nil {
+	if _, err := Load(data, dbdoc.Key{Password: "pw"}); err == nil {
 		t.Fatal("the key file must be required")
 	}
 
@@ -176,7 +173,7 @@ func TestKeyFileAndInspect(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Inspect: %v", err)
 	}
-	if info.FormatVersion != FormatVersion || info.Cipher != "AES-256-GCM" || info.KDF != "Argon2d" {
+	if info.FormatVersion != FormatVersion || info.Cipher != "AES-256-GCM" || info.KDF != "Argon2id" {
 		t.Errorf("info = %+v", info)
 	}
 	if info.KDFMemory == 0 || info.KDFIterations == 0 {
@@ -185,7 +182,7 @@ func TestKeyFileAndInspect(t *testing.T) {
 }
 
 func TestUnsupportedInput(t *testing.T) {
-	if _, err := Load([]byte("not a database at all"), kdbx.Key{Password: "x"}); err == nil {
+	if _, err := Load([]byte("not a database at all"), dbdoc.Key{Password: "x"}); err == nil {
 		t.Error("garbage must be rejected")
 	} else if !strings.Contains(err.Error(), "signature") {
 		t.Errorf("unexpected error: %v", err)

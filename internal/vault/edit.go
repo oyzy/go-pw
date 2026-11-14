@@ -7,7 +7,7 @@ import (
 	"sort"
 	"strings"
 
-	"gokeep/internal/kdbx"
+	"gokeep/internal/dbdoc"
 )
 
 // CreateEntry adds a new entry to a group.
@@ -25,12 +25,12 @@ func (v *Vault) CreateEntry(groupID string, dto EntryDTO) (string, error) {
 		// KeePass does not allow creating entries directly in the recycle bin.
 		return "", errors.New("vault: entries cannot be created inside the recycle bin")
 	}
-	entry := kdbx.NewEntry()
-	entry.SetField(kdbx.FieldTitle, dto.Title, false)
-	entry.SetField(kdbx.FieldUserName, dto.UserName, v.db.Meta.MemoryProtection.ProtectUserName)
-	entry.SetField(kdbx.FieldPassword, dto.Password, v.db.Meta.MemoryProtection.ProtectPassword)
-	entry.SetField(kdbx.FieldURL, dto.URL, v.db.Meta.MemoryProtection.ProtectURL)
-	entry.SetField(kdbx.FieldNotes, dto.Notes, v.db.Meta.MemoryProtection.ProtectNotes)
+	entry := dbdoc.NewEntry()
+	entry.SetField(dbdoc.FieldTitle, dto.Title, false)
+	entry.SetField(dbdoc.FieldUserName, dto.UserName, v.db.Meta.MemoryProtection.ProtectUserName)
+	entry.SetField(dbdoc.FieldPassword, dto.Password, v.db.Meta.MemoryProtection.ProtectPassword)
+	entry.SetField(dbdoc.FieldURL, dto.URL, v.db.Meta.MemoryProtection.ProtectURL)
+	entry.SetField(dbdoc.FieldNotes, dto.Notes, v.db.Meta.MemoryProtection.ProtectNotes)
 	if err := applyEntryDTO(v.db, entry, dto); err != nil {
 		return "", err
 	}
@@ -52,11 +52,11 @@ func (v *Vault) UpdateEntry(dto EntryDTO) error {
 		return err
 	}
 	v.pushHistoryLocked(entry)
-	entry.SetField(kdbx.FieldTitle, dto.Title, entry.IsFieldProtected(kdbx.FieldTitle))
-	entry.SetField(kdbx.FieldUserName, dto.UserName, entry.IsFieldProtected(kdbx.FieldUserName))
-	entry.SetField(kdbx.FieldPassword, dto.Password, entry.IsFieldProtected(kdbx.FieldPassword))
-	entry.SetField(kdbx.FieldURL, dto.URL, entry.IsFieldProtected(kdbx.FieldURL))
-	entry.SetField(kdbx.FieldNotes, dto.Notes, entry.IsFieldProtected(kdbx.FieldNotes))
+	entry.SetField(dbdoc.FieldTitle, dto.Title, entry.IsFieldProtected(dbdoc.FieldTitle))
+	entry.SetField(dbdoc.FieldUserName, dto.UserName, entry.IsFieldProtected(dbdoc.FieldUserName))
+	entry.SetField(dbdoc.FieldPassword, dto.Password, entry.IsFieldProtected(dbdoc.FieldPassword))
+	entry.SetField(dbdoc.FieldURL, dto.URL, entry.IsFieldProtected(dbdoc.FieldURL))
+	entry.SetField(dbdoc.FieldNotes, dto.Notes, entry.IsFieldProtected(dbdoc.FieldNotes))
 	if err := applyEntryDTO(v.db, entry, dto); err != nil {
 		return err
 	}
@@ -85,7 +85,7 @@ func (v *Vault) AddAttachment(entryID, name string, data []byte) error {
 			return nil
 		}
 	}
-	entry.Binaries = append(entry.Binaries, kdbx.BinaryRef{Key: name, Pool: pool})
+	entry.Binaries = append(entry.Binaries, dbdoc.BinaryRef{Key: name, Pool: pool})
 	entry.Times.Touch()
 	v.touch()
 	return nil
@@ -136,7 +136,9 @@ func (v *Vault) Attachment(entryID, name string) ([]byte, error) {
 }
 
 // TouchEntryAccess updates the last access time and the usage counter, like KeePass does
-// when an entry is used.
+// when an entry is used. Access bookkeeping alone is not a user-facing edit: selecting an
+// entry must not make closing the application ask about unsaved changes. The updated
+// counters are written the next time a real edit causes the database to be saved.
 func (v *Vault) TouchEntryAccess(id string) error {
 	v.mu.Lock()
 	defer v.mu.Unlock()
@@ -149,7 +151,6 @@ func (v *Vault) TouchEntryAccess(id string) error {
 	}
 	entry.Times.LastAccessTime = now()
 	entry.Times.UsageCount++
-	v.touch()
 	return nil
 }
 
@@ -161,8 +162,8 @@ func (v *Vault) Groups(includeRecycled bool) ([]GroupDTO, error) {
 		return nil, ErrLocked
 	}
 	var out []GroupDTO
-	var walk func(g *kdbx.Group, parent *kdbx.Group)
-	walk = func(g *kdbx.Group, parent *kdbx.Group) {
+	var walk func(g *dbdoc.Group, parent *dbdoc.Group)
+	walk = func(g *dbdoc.Group, parent *dbdoc.Group) {
 		if includeRecycled || !isInRecycleBin(v.db, g) {
 			out = append(out, groupToDTO(g, parent, v.db.Meta.RecycleBinUUID))
 		}
@@ -196,14 +197,14 @@ func (v *Vault) TagList() []string {
 }
 
 // recycleBinIDLocked returns the recycle bin UUID, or the zero UUID when disabled.
-func (v *Vault) recycleBinIDLocked() kdbx.UUID {
+func (v *Vault) recycleBinIDLocked() dbdoc.UUID {
 	if !v.db.Meta.RecycleBinEnabled {
-		return kdbx.ZeroUUID
+		return dbdoc.ZeroUUID
 	}
 	return v.db.Meta.RecycleBinUUID
 }
 
-func removeEntry(parent *kdbx.Group, entry *kdbx.Entry) {
+func removeEntry(parent *dbdoc.Group, entry *dbdoc.Entry) {
 	for i, e := range parent.Entries {
 		if e == entry || e.UUID == entry.UUID {
 			parent.Entries = append(parent.Entries[:i], parent.Entries[i+1:]...)
@@ -212,7 +213,7 @@ func removeEntry(parent *kdbx.Group, entry *kdbx.Entry) {
 	}
 }
 
-func removeGroup(parent, group *kdbx.Group) {
+func removeGroup(parent, group *dbdoc.Group) {
 	for i, g := range parent.Groups {
 		if g == group || g.UUID == group.UUID {
 			parent.Groups = append(parent.Groups[:i], parent.Groups[i+1:]...)
@@ -236,13 +237,13 @@ func maxU64(a, b uint64) uint64 {
 }
 
 // applyEntryDTO copies the fields shared by create and update.
-func applyEntryDTO(db *kdbx.Database, entry *kdbx.Entry, dto EntryDTO) error {
+func applyEntryDTO(db *dbdoc.Database, entry *dbdoc.Entry, dto EntryDTO) error {
 	if dto.IconID >= 0 {
 		entry.IconID = dto.IconID
 	}
-	entry.CustomIconUUID = kdbx.ZeroUUID
+	entry.CustomIconUUID = dbdoc.ZeroUUID
 	if dto.CustomIconID != "" {
-		uuid, err := kdbx.ParseUUID(dto.CustomIconID)
+		uuid, err := dbdoc.ParseUUID(dto.CustomIconID)
 		if err != nil {
 			return err
 		}
@@ -254,7 +255,7 @@ func applyEntryDTO(db *kdbx.Database, entry *kdbx.Entry, dto EntryDTO) error {
 	entry.Tags = trimTags(dto.Tags)
 	entry.Times.Expires = dto.Expires
 	if dto.Expires && dto.ExpiryTime != "" {
-		entry.Times.ExpiryTime = kdbx.ParseTime(dto.ExpiryTime)
+		entry.Times.ExpiryTime = dbdoc.ParseTime(dto.ExpiryTime)
 	}
 	entry.AutoType.Enabled = dto.AutoTypeEnabled
 	entry.AutoType.DefaultSequence = dto.AutoTypeSequence
@@ -263,7 +264,7 @@ func applyEntryDTO(db *kdbx.Database, entry *kdbx.Entry, dto EntryDTO) error {
 		if strings.TrimSpace(a.Window) == "" && strings.TrimSpace(a.Sequence) == "" {
 			continue
 		}
-		entry.AutoType.Associations = append(entry.AutoType.Associations, kdbx.AutoTypeAssociation{
+		entry.AutoType.Associations = append(entry.AutoType.Associations, dbdoc.AutoTypeAssociation{
 			WindowName: a.Window,
 			Sequence:   a.Sequence,
 		})
@@ -283,7 +284,7 @@ func applyEntryDTO(db *kdbx.Database, entry *kdbx.Entry, dto EntryDTO) error {
 
 func isStandardKey(key string) bool {
 	switch key {
-	case kdbx.FieldTitle, kdbx.FieldUserName, kdbx.FieldPassword, kdbx.FieldURL, kdbx.FieldNotes:
+	case dbdoc.FieldTitle, dbdoc.FieldUserName, dbdoc.FieldPassword, dbdoc.FieldURL, dbdoc.FieldNotes:
 		return true
 	}
 	return false
@@ -291,14 +292,14 @@ func isStandardKey(key string) bool {
 
 // pushHistoryLocked stores the current state of the entry as a revision and applies the
 // history limits of the database.
-func (v *Vault) pushHistoryLocked(entry *kdbx.Entry) {
+func (v *Vault) pushHistoryLocked(entry *dbdoc.Entry) {
 	backup := entry.CloneWithoutHistory()
 	backup.Times.LastModification = entry.Times.LastModification
 	entry.History = append(entry.History, backup)
 	v.trimHistoryLocked(entry)
 }
 
-func (v *Vault) trimHistoryLocked(entry *kdbx.Entry) {
+func (v *Vault) trimHistoryLocked(entry *dbdoc.Entry) {
 	maxItems := v.db.Meta.HistoryMaxItems
 	if maxItems > 0 && len(entry.History) > maxItems {
 		entry.History = entry.History[len(entry.History)-maxItems:]
@@ -311,7 +312,7 @@ func (v *Vault) trimHistoryLocked(entry *kdbx.Entry) {
 	}
 }
 
-func entrySize(history []*kdbx.Entry) int {
+func entrySize(history []*dbdoc.Entry) int {
 	total := 0
 	for _, h := range history {
 		for _, f := range h.Strings {
@@ -376,7 +377,7 @@ func (v *Vault) RestoreToPreviousGroup(id string) error {
 	if err != nil {
 		return err
 	}
-	var target *kdbx.Group
+	var target *dbdoc.Group
 	if !entry.PreviousParentGroup.IsZero() {
 		if previous := v.db.Root.FindGroup(entry.PreviousParentGroup); previous != nil && !isInRecycleBin(v.db, previous) {
 			target = previous
@@ -471,10 +472,10 @@ func (v *Vault) DuplicateEntry(id string) (string, error) {
 		return "", err
 	}
 	clone := entry.CloneWithoutHistory()
-	clone.UUID = kdbx.NewUUID()
-	clone.Times = kdbx.NewTimes()
-	title, _ := clone.Field(kdbx.FieldTitle)
-	clone.SetField(kdbx.FieldTitle, title+" (copy)", clone.IsFieldProtected(kdbx.FieldTitle))
+	clone.UUID = dbdoc.NewUUID()
+	clone.Times = dbdoc.NewTimes()
+	title, _ := clone.Field(dbdoc.FieldTitle)
+	clone.SetField(dbdoc.FieldTitle, title+" (copy)", clone.IsFieldProtected(dbdoc.FieldTitle))
 	parent.Entries = append(parent.Entries, clone)
 	parent.Times.Touch()
 	v.touch()
@@ -495,7 +496,7 @@ func (v *Vault) CreateGroup(parentID, name string, iconID int) (string, error) {
 	if isInRecycleBin(v.db, parent) {
 		return "", errors.New("vault: groups cannot be created inside the recycle bin")
 	}
-	group := kdbx.NewGroup(name)
+	group := dbdoc.NewGroup(name)
 	if iconID >= 0 {
 		group.IconID = iconID
 	}
@@ -521,9 +522,9 @@ func (v *Vault) UpdateGroup(dto GroupDTO) error {
 	if dto.IconID >= 0 {
 		group.IconID = dto.IconID
 	}
-	group.CustomIconUUID = kdbx.ZeroUUID
+	group.CustomIconUUID = dbdoc.ZeroUUID
 	if dto.CustomIconID != "" {
-		uuid, err := kdbx.ParseUUID(dto.CustomIconID)
+		uuid, err := dbdoc.ParseUUID(dto.CustomIconID)
 		if err != nil {
 			return err
 		}
@@ -535,7 +536,7 @@ func (v *Vault) UpdateGroup(dto GroupDTO) error {
 	group.EnableSearching = dto.EnableSearching
 	group.Times.Expires = dto.Expires
 	if dto.Expires && dto.ExpiryTime != "" {
-		group.Times.ExpiryTime = kdbx.ParseTime(dto.ExpiryTime)
+		group.Times.ExpiryTime = dbdoc.ParseTime(dto.ExpiryTime)
 	}
 	group.Times.Touch()
 	v.touch()
@@ -582,9 +583,9 @@ func (v *Vault) DeleteGroup(id string, permanently bool) error {
 		return nil
 	}
 	removeGroup(parent, group)
-	group.Walk(func(g *kdbx.Group) {
-		v.db.DeletedObjects = append(v.db.DeletedObjects, kdbx.DeletedObject{UUID: g.UUID, DeletionTime: now()})
-	}, func(e *kdbx.Entry) {
+	group.Walk(func(g *dbdoc.Group) {
+		v.db.DeletedObjects = append(v.db.DeletedObjects, dbdoc.DeletedObject{UUID: g.UUID, DeletionTime: now()})
+	}, func(e *dbdoc.Entry) {
 		v.recordDeletionLocked(e)
 	})
 	parent.Times.Touch()
@@ -649,9 +650,9 @@ func (v *Vault) EmptyRecycleBin() error {
 		v.recordDeletionLocked(e)
 	}
 	for _, g := range bin.Groups {
-		g.Walk(func(sub *kdbx.Group) {
-			v.db.DeletedObjects = append(v.db.DeletedObjects, kdbx.DeletedObject{UUID: sub.UUID, DeletionTime: now()})
-		}, func(e *kdbx.Entry) {
+		g.Walk(func(sub *dbdoc.Group) {
+			v.db.DeletedObjects = append(v.db.DeletedObjects, dbdoc.DeletedObject{UUID: sub.UUID, DeletionTime: now()})
+		}, func(e *dbdoc.Entry) {
 			v.recordDeletionLocked(e)
 		})
 	}
@@ -663,10 +664,10 @@ func (v *Vault) EmptyRecycleBin() error {
 }
 
 // recordDeletionLocked appends deletion markers for an entry and its history.
-func (v *Vault) recordDeletionLocked(entry *kdbx.Entry) {
-	v.db.DeletedObjects = append(v.db.DeletedObjects, kdbx.DeletedObject{UUID: entry.UUID, DeletionTime: now()})
+func (v *Vault) recordDeletionLocked(entry *dbdoc.Entry) {
+	v.db.DeletedObjects = append(v.db.DeletedObjects, dbdoc.DeletedObject{UUID: entry.UUID, DeletionTime: now()})
 	for _, h := range entry.History {
-		v.db.DeletedObjects = append(v.db.DeletedObjects, kdbx.DeletedObject{UUID: h.UUID, DeletionTime: now()})
+		v.db.DeletedObjects = append(v.db.DeletedObjects, dbdoc.DeletedObject{UUID: h.UUID, DeletionTime: now()})
 	}
 }
 

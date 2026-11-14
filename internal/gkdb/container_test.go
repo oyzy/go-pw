@@ -4,14 +4,14 @@ import (
 	"bytes"
 	"testing"
 
-	"gokeep/internal/kdbx"
+	"gokeep/internal/dbdoc"
 )
 
 // TestHeaderSaltDrivesKeyDerivation guards the invariant that bit us once: the key must
 // be derived from the parameters as they appear in the header (including the header
 // salt), otherwise the file cannot be decrypted again.
 func TestHeaderSaltDrivesKeyDerivation(t *testing.T) {
-	key := kdbx.Key{Password: "pw"}
+	key := dbdoc.Key{Password: "pw"}
 	data, err := Save(testDatabase(), key, DefaultOptions())
 	if err != nil {
 		t.Fatal(err)

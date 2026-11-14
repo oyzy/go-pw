@@ -1,4 +1,4 @@
-// Package vault turns the raw KDBX database model into the session oriented operations
+// Package vault turns the raw GoKeep document model into the session oriented operations
 // the user interface needs: opening and saving files, editing groups and entries with
 // history and recycle bin semantics, searching and clipboard handling.
 package vault
@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"gokeep/internal/kdbx"
+	"gokeep/internal/dbdoc"
 	"gokeep/internal/pwquality"
 )
 
@@ -172,10 +172,10 @@ func formatTime(t time.Time) string {
 	return t.UTC().Format(time.RFC3339)
 }
 
-func idOf(u kdbx.UUID) string { return u.Hex() }
+func idOf(u dbdoc.UUID) string { return u.Hex() }
 
 // groupToDTO converts a group and its subtree.
-func groupToDTO(g *kdbx.Group, parent *kdbx.Group, recycleBin kdbx.UUID) GroupDTO {
+func groupToDTO(g *dbdoc.Group, parent *dbdoc.Group, recycleBin dbdoc.UUID) GroupDTO {
 	parentID := ""
 	if parent != nil {
 		parentID = idOf(parent.UUID)
@@ -205,7 +205,7 @@ func groupToDTO(g *kdbx.Group, parent *kdbx.Group, recycleBin kdbx.UUID) GroupDT
 	return dto
 }
 
-func entryToDTO(db *kdbx.Database, e *kdbx.Entry, parent *kdbx.Group) EntryDTO {
+func entryToDTO(db *dbdoc.Database, e *dbdoc.Entry, parent *dbdoc.Group) EntryDTO {
 	dto := EntryDTO{
 		ID:               idOf(e.UUID),
 		IconID:           e.IconID,
@@ -228,12 +228,12 @@ func entryToDTO(db *kdbx.Database, e *kdbx.Entry, parent *kdbx.Group) EntryDTO {
 		dto.GroupPath = groupPath(db.Root, parent)
 		dto.IsRecycled = isInRecycleBin(db, parent)
 	}
-	dto.Title, _ = e.Field(kdbx.FieldTitle)
-	dto.UserName, _ = e.Field(kdbx.FieldUserName)
-	dto.Password, _ = e.Field(kdbx.FieldPassword)
-	dto.URL, _ = e.Field(kdbx.FieldURL)
-	dto.Notes, _ = e.Field(kdbx.FieldNotes)
-	dto.PasswordProtected = e.IsFieldProtected(kdbx.FieldPassword)
+	dto.Title, _ = e.Field(dbdoc.FieldTitle)
+	dto.UserName, _ = e.Field(dbdoc.FieldUserName)
+	dto.Password, _ = e.Field(dbdoc.FieldPassword)
+	dto.URL, _ = e.Field(dbdoc.FieldURL)
+	dto.Notes, _ = e.Field(dbdoc.FieldNotes)
+	dto.PasswordProtected = e.IsFieldProtected(dbdoc.FieldPassword)
 	for _, f := range e.CustomFields() {
 		dto.Fields = append(dto.Fields, FieldDTO{Key: f.Key, Value: f.Value, Protected: f.Protected})
 	}
@@ -248,8 +248,8 @@ func entryToDTO(db *kdbx.Database, e *kdbx.Entry, parent *kdbx.Group) EntryDTO {
 		dto.Attachments = append(dto.Attachments, att)
 	}
 	for i, h := range e.History {
-		title, _ := h.Field(kdbx.FieldTitle)
-		user, _ := h.Field(kdbx.FieldUserName)
+		title, _ := h.Field(dbdoc.FieldTitle)
+		user, _ := h.Field(dbdoc.FieldUserName)
 		dto.History = append(dto.History, HistoryDTO{
 			ID:       idOf(h.UUID),
 			Index:    i,
@@ -282,15 +282,15 @@ func (d EntryDTO) HasTOTP() bool {
 // standard field names as well as custom field keys.
 func (d EntryDTO) FieldValue(field string) (string, bool) {
 	switch field {
-	case kdbx.FieldTitle:
+	case dbdoc.FieldTitle:
 		return d.Title, false
-	case kdbx.FieldUserName:
+	case dbdoc.FieldUserName:
 		return d.UserName, false
-	case kdbx.FieldPassword:
+	case dbdoc.FieldPassword:
 		return d.Password, true
-	case kdbx.FieldURL:
+	case dbdoc.FieldURL:
 		return d.URL, false
-	case kdbx.FieldNotes:
+	case dbdoc.FieldNotes:
 		return d.Notes, false
 	}
 	for _, f := range d.Fields {
@@ -301,12 +301,12 @@ func (d EntryDTO) FieldValue(field string) (string, bool) {
 	return "", false
 }
 
-func entryToSummary(db *kdbx.Database, e *kdbx.Entry, parent *kdbx.Group) EntrySummary {
-	title, _ := e.Field(kdbx.FieldTitle)
-	user, _ := e.Field(kdbx.FieldUserName)
-	url, _ := e.Field(kdbx.FieldURL)
-	notes, _ := e.Field(kdbx.FieldNotes)
-	password, _ := e.Field(kdbx.FieldPassword)
+func entryToSummary(db *dbdoc.Database, e *dbdoc.Entry, parent *dbdoc.Group) EntrySummary {
+	title, _ := e.Field(dbdoc.FieldTitle)
+	user, _ := e.Field(dbdoc.FieldUserName)
+	url, _ := e.Field(dbdoc.FieldURL)
+	notes, _ := e.Field(dbdoc.FieldNotes)
+	password, _ := e.Field(dbdoc.FieldPassword)
 	s := EntrySummary{
 		ID:           idOf(e.UUID),
 		Title:        title,
@@ -338,10 +338,10 @@ func entryToSummary(db *kdbx.Database, e *kdbx.Entry, parent *kdbx.Group) EntryS
 }
 
 // groupPath builds the "/" separated path of a group inside the database.
-func groupPath(root, target *kdbx.Group) string {
+func groupPath(root, target *dbdoc.Group) string {
 	var path []string
-	var walk func(g *kdbx.Group, acc []string) bool
-	walk = func(g *kdbx.Group, acc []string) bool {
+	var walk func(g *dbdoc.Group, acc []string) bool
+	walk = func(g *dbdoc.Group, acc []string) bool {
 		acc = append(acc, g.Name)
 		if g == target || g.UUID == target.UUID {
 			path = append([]string{}, acc...)
@@ -364,7 +364,7 @@ func groupPath(root, target *kdbx.Group) string {
 }
 
 // isInRecycleBin reports whether the group is the recycle bin or below it.
-func isInRecycleBin(db *kdbx.Database, g *kdbx.Group) bool {
+func isInRecycleBin(db *dbdoc.Database, g *dbdoc.Group) bool {
 	bin := db.RecycleBin()
 	if bin == nil {
 		return false
@@ -373,18 +373,18 @@ func isInRecycleBin(db *kdbx.Database, g *kdbx.Group) bool {
 		return true
 	}
 	found := false
-	bin.Walk(func(sub *kdbx.Group) {
+	bin.Walk(func(sub *dbdoc.Group) {
 		if sub.UUID == g.UUID {
 			found = true
 		}
-	}, func(*kdbx.Entry) {})
+	}, func(*dbdoc.Entry) {})
 	return found
 }
 
-func sortEntriesByTitle(entries []*kdbx.Entry) {
+func sortEntriesByTitle(entries []*dbdoc.Entry) {
 	sort.SliceStable(entries, func(i, j int) bool {
-		ti, _ := entries[i].Field(kdbx.FieldTitle)
-		tj, _ := entries[j].Field(kdbx.FieldTitle)
+		ti, _ := entries[i].Field(dbdoc.FieldTitle)
+		tj, _ := entries[j].Field(dbdoc.FieldTitle)
 		return strings.ToLower(ti) < strings.ToLower(tj)
 	})
 }

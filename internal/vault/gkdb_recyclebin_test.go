@@ -4,7 +4,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"gokeep/internal/kdbx"
+	"gokeep/internal/dbdoc"
 )
 
 // TestNativeFormatKeepsRecycleBin checks the native .gkdb round trip: the bin group and the
@@ -12,7 +12,7 @@ import (
 func TestNativeFormatKeepsRecycleBin(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "bin.gkdb")
-	key := kdbx.Key{Password: "pw"}
+	key := dbdoc.Key{Password: "pw"}
 	v, err := Create(path, key, "Native", DefaultSaveSettings())
 	if err != nil {
 		t.Fatal(err)
