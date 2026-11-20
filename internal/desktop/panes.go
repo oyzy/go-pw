@@ -55,7 +55,9 @@ func (m *Model) treePane(c ui.C, width float32) {
 			m.rows = m.buildRows()
 		}
 		if hasMove {
-			m.dropGroup(move)
+			// The move changes the rows this paint is still declaring, so it is
+			// done after it, as TreeState.Dropped asks.
+			after(c, func() { m.dropGroup(move) })
 		}
 	})
 }
@@ -70,10 +72,147 @@ func (m *Model) dropGroup(move ui.TreeMove) {
 	if v == nil || from == "" {
 		return
 	}
-	if err := v.MoveGroup(from, to); err != nil {
+	var err error
+	switch move.Where {
+	case ui.TreeDropBefore, ui.TreeDropAfter:
+		if to == "" {
+			return
+		}
+		err = v.MoveGroupBeside(from, to, move.Where == ui.TreeDropAfter)
+	default:
+		err = v.MoveGroup(from, to)
+	}
+	if err != nil {
 		m.fail(err)
+		return
 	}
 	m.reload()
+	m.info(m.t("toast.saved"))
+}
+
+// canDropGroup says whether the tree takes the group row from, let go on row to,
+// at where: a group goes into another group, or beside it on its own level, never
+// into itself or what is inside it.
+func (m *Model) canDropGroup(from, to int, where ui.TreeDrop) bool {
+	if from < 0 || to < 0 || from >= len(m.rows) || to >= len(m.rows) || from == to {
+		return false
+	}
+	source, target := m.rows[from], m.rows[to]
+	if source.id == "" {
+		return false
+	}
+	switch where {
+	case ui.TreeDropInside:
+		if target.id == "" {
+			// The row of every entry names the root: dropping into it moves the
+			// group back to the top level.
+			if v := m.vault(); v != nil {
+				return source.parent != v.RootID()
+			}
+			return false
+		}
+		return target.id != source.id && !m.groupInside(source.id, target.id) && source.parent != target.id
+	case ui.TreeDropBefore, ui.TreeDropAfter:
+		if target.id == "" || target.id == source.id || target.id == source.parent {
+			return false
+		}
+		parent := target.parent
+		return parent != source.id && !m.groupInside(source.id, parent)
+	}
+	return false
+}
+
+// groupInside reports whether group groupID is somewhere below group ancestorID.
+func (m *Model) groupInside(ancestorID, groupID string) bool {
+	v := m.vault()
+	if v == nil || ancestorID == "" || groupID == "" {
+		return false
+	}
+	var find func(groups []vault.GroupDTO) bool
+	find = func(groups []vault.GroupDTO) bool {
+		for _, group := range groups {
+			if group.ID == ancestorID {
+				return groupHas(group.Children, groupID)
+			}
+			if find(group.Children) {
+				return true
+			}
+		}
+		return false
+	}
+	return find(v.Tree())
+}
+
+// groupHas reports whether id is one of groups or inside one of them.
+func groupHas(groups []vault.GroupDTO, id string) bool {
+	for _, group := range groups {
+		if group.ID == id || groupHas(group.Children, id) {
+			return true
+		}
+	}
+	return false
+}
+
+// canDropEntry says whether group row target takes the entry row source: an entry
+// goes into any group but the one it is already in.
+func (m *Model) canDropEntry(source, target gfx.ID) bool {
+	entry, ok := m.entryOfRow(source)
+	if !ok {
+		return false
+	}
+	groupID, ok := m.groupOfRow(target)
+	if !ok {
+		return false
+	}
+	if groupID == "" {
+		if v := m.vault(); v != nil {
+			groupID = v.RootID()
+		}
+	}
+	return entry.GroupID != groupID
+}
+
+// dropEntry moves the dragged entry into the group it was let go on.
+func (m *Model) dropEntry(source, target gfx.ID) {
+	entry, ok := m.entryOfRow(source)
+	if !ok {
+		return
+	}
+	groupID, ok := m.groupOfRow(target)
+	if !ok {
+		return
+	}
+	v := m.vault()
+	if v == nil {
+		return
+	}
+	if err := v.MoveEntry(entry.ID, groupID); err != nil {
+		m.fail(err)
+		return
+	}
+	m.reload()
+	m.info(m.t("toast.saved"))
+}
+
+// entryOfRow resolves the identity of a list row to the entry it shows.
+func (m *Model) entryOfRow(id gfx.ID) (vault.EntrySummary, bool) {
+	for i := range m.entries {
+		if m.list.RowID(i) == id {
+			return m.entries[i], true
+		}
+	}
+	return vault.EntrySummary{}, false
+}
+
+// groupOfRow resolves the identity of a tree row to the group it shows. The row
+// of every entry names the root group with "".
+func (m *Model) groupOfRow(id gfx.ID) (string, bool) {
+	for i := range m.rows {
+		if m.tree.RowID(i) == id {
+			return m.rows[i].id, true
+		}
+	}
+	return "", false
 }
 
 // treeRowName is the accessible name of a tree row.
@@ -84,6 +223,11 @@ func (m *Model) treeRowName(index int) string {
 	return m.rows[index].name
 }
 
+// treeChevronGutter is the column components.Tree keeps for the chevron of a branch.
+// A row without one keeps it blank too, so every name starts at the same place at
+// its level instead of a leaf's name sitting left of a branch's.
+const treeChevronGutter = 24
+
 // treeRow declares what is in one tree row: its name, its entry count and the menu a
 // secondary press opens.
 func (m *Model) treeRow(index int) {
@@ -92,13 +236,29 @@ func (m *Model) treeRow(index int) {
 		return
 	}
 	row := m.rows[index]
-	// The name is a hit of its own so that the context menu has a target: a plain text
-	// is not one (see ui.ContextMenu).
-	name := ui.Text(c, row.name).Ellipsis().Hit(ui.ID(c), row.name)
-	if row.entries > 0 {
-		ui.Text(c, fmt.Sprint(row.entries)).Muted().FontSize(11)
-	}
-	ui.ContextMenu(c, name, func(items *ui.MenuItems) { m.groupContextMenu(items, row) })
+	id := m.tree.RowID(index)
+	// The row is a drop target for an entry dragged out of the list. It is drawn
+	// under the row's content, so it can also paint the highlight of the group an
+	// entry would go into.
+	content := ui.Row(c).FillWidth().Height(m.tree.RowHeight).Items(ui.Center).Gap(m.theme.Metrics.GapItem)
+	content.Draw(func(d *ui.DrawContext) {
+		if m.drag.Dragging() && m.drag.Target() == id {
+			d.Canvas.Rounded(d.Rect, m.theme.Metrics.RadiusControl, m.theme.Accent)
+		}
+		d.DropTarget(&m.drag, id, d.Rect, m.dragAccept, m.dragDrop)
+	}).Children(func() {
+		// The name labels the row's control instead of taking a hit of its own: a
+		// plain text is no target for the context menu, but a hit of its own would
+		// take the clicks that choose the row.
+		name := ui.Text(c, row.name).Ellipsis().LabelFor(id)
+		if !row.branch {
+			name = name.PadLeft(treeChevronGutter)
+		}
+		if row.entries > 0 {
+			ui.Text(c, fmt.Sprint(row.entries)).Muted().FontSize(11)
+		}
+		ui.ContextMenu(c, name, func(items *ui.MenuItems) { m.groupContextMenu(items, row) })
+	})
 }
 
 // groupContextMenu is the menu of a group row.
@@ -124,12 +284,6 @@ func (m *Model) groupContextMenu(items *ui.MenuItems, row groupRow) {
 			m.askDeleteGroup(row.id, row.name)
 		}
 	}
-	if row.recycled {
-		items.Separator()
-		if items.Item(m.t("group.menuEmptyBin")).Clicked() {
-			m.cmdEmptyRecycleBin(false)
-		}
-	}
 }
 
 // listPane is the entry list in the middle.
@@ -143,6 +297,16 @@ func (m *Model) listPane(c ui.C, width float32) {
 				ui.Text(c, m.t("list.recycleHint")).Muted().FontSize(12)
 			}
 		})
+		// The columns the rows below carry, named once above them so the list reads
+		// as a table instead of unlabelled values.
+		ui.Row(c).FillWidth().Height(24).PadX(10).Gap(10).Items(ui.Center).Children(func() {
+			headerCell(c, m.t("list.columnTitle"), 200)
+			headerCell(c, m.t("list.columnUser"), 130)
+			headerCell(c, m.t("list.columnUrl"), 170)
+			headerCell(c, m.t("list.columnQuality"), 80)
+			headerCell(c, m.t("list.columnModified"), listTimeWidth)
+		})
+		ui.Divider(c)
 		ui.List(c, &m.list, len(m.entries), m.listContent).Grow(1)
 		if m.list.Changed() {
 			if index := m.list.Selected(); index >= 0 && index < len(m.entries) {
@@ -162,17 +326,18 @@ func (m *Model) listRow(row ui.ListRow) {
 		return
 	}
 	entry := m.entries[row.Index]
-	row.Element.PadX(10).PadY(4).Gap(10).Items(ui.Center).
-		Hover(ui.Look{}.Background(m.theme.Hover)).
+	element := row.Element.PadX(10).PadY(4).Gap(10).Items(ui.Center).
+		Hover(ui.Look{}.Background(m.theme.Hover))
+	if m.drag.Dragging() && m.drag.Source() == row.ID {
+		element = element.Opacity(0.4) // the row being dragged, as a tree's rows show
+	}
+	element.DragSource(&m.drag).
 		Children(func() {
-			if entry.IsRecycled {
-				ui.Text(row.C, m.t("detail.recycledBadge")).Color(m.theme.Danger).FontSize(11)
-			}
 			cell(row.C, entry.Title, 200)
 			cell(row.C, entry.UserName, 130)
 			cell(row.C, entry.URL, 170)
 			cell(row.C, m.qualityLabel(entry.Quality), 80)
-			ui.Text(row.C, shortTime(entry.Modified)).Muted().FontSize(12)
+			ui.Text(row.C, shortTime(entry.Modified)).Width(listTimeWidth).Ellipsis().Muted().FontSize(12)
 		})
 	ui.ContextMenu(row.C, row.Element, func(items *ui.MenuItems) { m.entryContextMenu(items, entry) })
 }
@@ -181,6 +346,16 @@ func (m *Model) listRow(row ui.ListRow) {
 func cell(c ui.C, text string, width float32) {
 	ui.Text(c, text).Width(width).Ellipsis()
 }
+
+// headerCell names one column of the entry list, as wide as its cells.
+func headerCell(c ui.C, text string, width float32) {
+	ui.Text(c, text).Width(width).Ellipsis().Muted().FontSize(11)
+}
+
+// listTimeWidth is the width of the modified column. Every column of the list has a
+// fixed width so the headings and the rows shrink by the same amount in a pane too
+// narrow for all of them.
+const listTimeWidth = 110
 
 // entryContextMenu is the right-click menu of an entry row.
 func (m *Model) entryContextMenu(items *ui.MenuItems, entry vault.EntrySummary) {
@@ -358,6 +533,9 @@ func (m *Model) detailRowURL(c ui.C) {
 func (m *Model) listTitle() string {
 	if strings.TrimSpace(m.search) != "" {
 		return m.t("search.title")
+	}
+	if m.recycleView() {
+		return m.t("app.recycleBin")
 	}
 	if m.groupID == "" {
 		return m.t("tree.allEntries")

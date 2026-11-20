@@ -271,17 +271,6 @@ func (m *Model) viewMenu(c ui.C, items *ui.MenuItems) {
 	if items.Item(m.t("menu.refresh")).Keys(gfx.ModifierControl, "r").Disabled(!m.sess.Unlocked()).Clicked() {
 		m.reload()
 	}
-	showBin := m.sess.Config().Get().ShowRecycleBin
-	label := m.t("menu.showRecycleBin")
-	if showBin {
-		label = m.t("menu.hideRecycleBin")
-	}
-	if items.Item(label).Disabled(!m.sess.Unlocked()).Clicked() {
-		cfg := m.sess.Config().Get()
-		cfg.ShowRecycleBin = !cfg.ShowRecycleBin
-		_ = m.sess.Config().Set(cfg)
-		m.reload()
-	}
 	items.Separator()
 	theme := m.t("menu.toggleTheme")
 	if m.dark() {
@@ -300,6 +289,9 @@ func (m *Model) toolsMenu(c ui.C, items *ui.MenuItems) {
 	}
 	if items.Item(m.t("menu.dbSettings")).Disabled(!m.sess.Unlocked()).Clicked() {
 		m.openSettings()
+	}
+	if items.Item(m.t("app.recycleBin")).Disabled(m.recycleBinID() == "").Clicked() {
+		m.selectGroup(m.recycleBinID())
 	}
 	if items.Item(m.t("menu.changeKey")).Disabled(!m.sess.Unlocked()).Clicked() {
 		m.key = keyState{open: true}
@@ -419,9 +411,6 @@ func (m *Model) statusbar(c ui.C) {
 			ui.Text(c, m.tf("status.summary", "entries", info.EntryCount, "groups", info.GroupCount)).Muted().FontSize(12)
 		}
 		ui.Spacer(c)
-		if !m.sess.Config().Get().ShowRecycleBin {
-			ui.Text(c, m.t("status.recycleBinOffHint")).Color(theme.Danger).FontSize(12)
-		}
 		if active, remaining := m.sess.ClipboardState(); active {
 			ui.Text(c, m.tf("status.clipboard", "seconds", remaining)).Muted().FontSize(12)
 		}

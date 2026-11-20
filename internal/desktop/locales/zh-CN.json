@@ -112,8 +112,6 @@
   },
   "status": {
     "notOpen": "未打开数据库",
-    "recycleBinOff": "回收站已关闭（删除将永久生效）",
-    "recycleBinOffHint": "点击此处启用回收站",
     "summary": "{entries} 条目 / {groups} 分组",
     "summaryFull": "{entries} 条目 / {groups} 分组 · {cipher} · {kdf} · {version} · {security}",
     "clipboard": "剪贴板将在 {seconds} 秒后清空"
@@ -472,8 +470,6 @@
     "find": "查找...",
     "findAll": "在所有分组中查找",
     "refresh": "刷新",
-    "showRecycleBin": "显示回收站",
-    "hideRecycleBin": "隐藏回收站",
     "toggleTheme": "切换主题",
     "generator": "密码生成器...",
     "dbSettings": "数据库设置...",

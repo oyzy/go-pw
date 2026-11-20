@@ -144,30 +144,24 @@ func TestDeleteMovesTheEntryToTheRecycleBinAndShowsIt(t *testing.T) {
 		t.Fatalf("the recycle bin holds %d entries (err %v), want 1", len(entries), err)
 	}
 	model.reload()
-	found := false
 	for _, row := range model.rows {
-		if row.id != binID {
-			continue
+		if row.id == binID {
+			t.Fatalf("the recycle bin is in the group tree: %v", rowNames(model))
 		}
-		found = true
-		if row.name != model.t("app.recycleBin") {
-			t.Fatalf("the recycle bin row is named %q, want %q", row.name, model.t("app.recycleBin"))
-		}
-		if !row.recycled {
-			t.Fatal("the recycle bin row is not marked as the recycle bin")
-		}
-	}
-	if !found {
-		t.Fatalf("the recycle bin does not appear in the group tree: %v", rowNames(model))
 	}
 	model.selectGroup(binID)
 	if len(model.entries) != 1 || !model.entries[0].IsRecycled {
 		t.Fatalf("the recycle bin shows %d entries, want the deleted one", len(model.entries))
 	}
+	if got := model.listTitle(); got != model.t("app.recycleBin") {
+		t.Fatalf("the list names the recycle bin %q, want %q", got, model.t("app.recycleBin"))
+	}
 }
 
-func TestRecycleBinCanBeHiddenWithoutLosingIt(t *testing.T) {
-	_, model := newTestPage(t, "en")
+// TestTheRecycleBinIsReachedFromTheToolsMenu pins that the recycle bin is no longer
+// a row of the group tree: the tools menu opens it, after the database settings.
+func TestTheRecycleBinIsReachedFromTheToolsMenu(t *testing.T) {
+	driver, model := newTestPage(t, "en")
 	create(t, model, "master")
 	v := model.vault()
 	groupID, err := v.CreateGroup("", "Mail", 0)
@@ -180,20 +174,242 @@ func TestRecycleBinCanBeHiddenWithoutLosingIt(t *testing.T) {
 	}
 	model.deleteEntry(entryID, false)
 	binID := model.recycleBinID()
-
-	cfg := model.sess.Config().Get()
-	cfg.ShowRecycleBin = false
-	if err := model.sess.Config().Set(cfg); err != nil {
-		t.Fatalf("cannot save the configuration: %v", err)
+	if binID == "" {
+		t.Fatal("deleting an entry did not create the recycle bin")
 	}
 	model.reload()
+
 	for _, row := range model.rows {
 		if row.id == binID {
-			t.Fatal("the recycle bin is still shown although it was switched off")
+			t.Fatalf("the recycle bin is in the group tree: %v", rowNames(model))
 		}
 	}
-	if entries, err := v.Entries(binID, false, true); err != nil || len(entries) != 1 {
-		t.Fatalf("switching the recycle bin off lost the entry: %d entries, err %v", len(entries), err)
+	clickLabel(t, driver, model, model.t("menu.tools"))
+	clickLabel(t, driver, model, model.t("app.recycleBin"))
+
+	if model.groupID != binID {
+		t.Fatalf("the menu chose group %q, want the recycle bin %q", model.groupID, binID)
+	}
+	if len(model.entries) != 1 || !model.entries[0].IsRecycled {
+		t.Fatalf("the recycle bin shows %d entries, want the deleted one", len(model.entries))
+	}
+}
+
+// TestTheEntryListNamesItsColumns pins the heading row above the entries, lined up
+// with the columns the rows paint.
+func TestTheEntryListNamesItsColumns(t *testing.T) {
+	driver, model := newTestPage(t, "en")
+	create(t, model, "master")
+	v := model.vault()
+	groupID, err := v.CreateGroup(v.RootID(), "Mail", 0)
+	if err != nil {
+		t.Fatalf("cannot create the group: %v", err)
+	}
+	if _, err := v.CreateEntry(groupID, vault.EntryDTO{Title: "Mailbox", UserName: "root", URL: "http://a.b"}); err != nil {
+		t.Fatalf("cannot create the entry: %v", err)
+	}
+	model.reload()
+	model.selectGroup(groupID)
+	if err := paint(driver, model); err != nil {
+		t.Fatalf("cannot paint the workspace: %v", err)
+	}
+
+	for _, key := range []string{"list.columnTitle", "list.columnUser", "list.columnUrl", "list.columnQuality", "list.columnModified"} {
+		paintedTextBounds(t, driver, model.t(key))
+	}
+	for _, column := range []struct{ value, key string }{
+		{"Mailbox", "list.columnTitle"},
+		{"root", "list.columnUser"},
+		{"http://a.b", "list.columnUrl"},
+	} {
+		cell := paintedTextBounds(t, driver, column.value)
+		heading := paintedTextAbove(t, driver, model.t(column.key), cell.Y)
+		if heading.X != cell.X {
+			t.Fatalf("the heading %q starts at %v, its column at %v", model.t(column.key), heading.X, cell.X)
+		}
+		if heading.Y >= cell.Y {
+			t.Fatalf("the heading %q is painted on or below its row", model.t(column.key))
+		}
+	}
+}
+
+// TestClickingTheNameOfAGroupChoosesIt pins that the words of a group row are part of
+// the row's click target, and that a row without a chevron still keeps its column: a
+// name with a hit of its own took the clicks that choose the group, so only the space
+// to its right worked, and a leaf's name sat left of a branch's at the same depth.
+func TestClickingTheNameOfAGroupChoosesIt(t *testing.T) {
+	driver, model := newTestPage(t, "en")
+	create(t, model, "master")
+	v := model.vault()
+	workID, err := v.CreateGroup(v.RootID(), "Work", 0)
+	if err != nil {
+		t.Fatalf("cannot create the group: %v", err)
+	}
+	if _, err := v.CreateEntry(workID, vault.EntryDTO{Title: "Mailbox"}); err != nil {
+		t.Fatalf("cannot create the entry: %v", err)
+	}
+	emptyID, err := v.CreateGroup(v.RootID(), "Empty", 0)
+	if err != nil {
+		t.Fatalf("cannot create the group: %v", err)
+	}
+	model.reload()
+	if err := paint(driver, model); err != nil {
+		t.Fatalf("cannot paint the workspace: %v", err)
+	}
+
+	branch := paintedTextBounds(t, driver, "Work")
+	leaf := paintedTextBounds(t, driver, "Empty")
+	if branch.X != leaf.X {
+		t.Fatalf("the names start at %v and %v: a row without a chevron does not line up", branch.X, leaf.X)
+	}
+
+	for _, group := range []struct {
+		name string
+		id   string
+	}{{"Work", workID}, {"Empty", emptyID}} {
+		bounds := paintedTextBounds(t, driver, group.name)
+		if err := driver.Click(bounds.X+2, bounds.Y+bounds.Height/2); err != nil {
+			t.Fatalf("clicking the name of %q: %v", group.name, err)
+		}
+		if err := paint(driver, model); err != nil {
+			t.Fatalf("cannot paint after clicking %q: %v", group.name, err)
+		}
+		if model.groupID != group.id {
+			t.Fatalf("clicking the name of %q chose %q, want %q", group.name, model.groupID, group.id)
+		}
+	}
+}
+
+// TestDraggingAGroupIntoAnotherMovesIt pins the tree's drag and drop: a group let
+// go on another group becomes its child, the way the Move dialog moves it.
+func TestDraggingAGroupIntoAnotherMovesIt(t *testing.T) {
+	driver, model := newTestPage(t, "en")
+	create(t, model, "master")
+	v := model.vault()
+	alphaID, err := v.CreateGroup(v.RootID(), "Alpha", 0)
+	if err != nil {
+		t.Fatalf("cannot create the group: %v", err)
+	}
+	betaID, err := v.CreateGroup(v.RootID(), "Beta", 0)
+	if err != nil {
+		t.Fatalf("cannot create the group: %v", err)
+	}
+	model.reload()
+
+	dragTo(t, driver, model, "Alpha", "Beta")
+
+	for _, row := range model.rows {
+		if row.id != alphaID {
+			continue
+		}
+		if row.parent != betaID {
+			t.Fatalf("Alpha's parent is %q, want Beta %q", row.parent, betaID)
+		}
+		return
+	}
+	t.Fatalf("Alpha is not in the group tree: %v", rowNames(model))
+}
+
+// TestDraggingAGroupBesideAnotherReordersThem pins that a group let go on the top or
+// bottom edge of a sibling takes its place on that level, the way a list reorders.
+func TestDraggingAGroupBesideAnotherReordersThem(t *testing.T) {
+	driver, model := newTestPage(t, "en")
+	create(t, model, "master")
+	v := model.vault()
+	alphaID, err := v.CreateGroup(v.RootID(), "Alpha", 0)
+	if err != nil {
+		t.Fatalf("cannot create the group: %v", err)
+	}
+	betaID, err := v.CreateGroup(v.RootID(), "Beta", 0)
+	if err != nil {
+		t.Fatalf("cannot create the group: %v", err)
+	}
+	gammaID, err := v.CreateGroup(v.RootID(), "Gamma", 0)
+	if err != nil {
+		t.Fatalf("cannot create the group: %v", err)
+	}
+	model.reload()
+
+	dragToAt(t, driver, model, "Gamma", "Alpha", 0.2)
+	want := []string{gammaID, alphaID, betaID}
+	for i, id := range want {
+		if model.rows[i+1].id != id {
+			t.Fatalf("the level is %v, want Gamma before Alpha before Beta", rowNames(model))
+		}
+	}
+
+	dragToAt(t, driver, model, "Alpha", "Beta", 0.8)
+	want = []string{gammaID, betaID, alphaID}
+	for i, id := range want {
+		if model.rows[i+1].id != id {
+			t.Fatalf("the level is %v, want Alpha after Beta", rowNames(model))
+		}
+	}
+}
+
+// TestAGroupCannotBeDroppedIntoItsOwnChild pins the tree's cycle guard, and that the
+// row of every entry takes a group back to the root.
+func TestAGroupCannotBeDroppedIntoItsOwnChild(t *testing.T) {
+	driver, model := newTestPage(t, "en")
+	create(t, model, "master")
+	v := model.vault()
+	alphaID, err := v.CreateGroup(v.RootID(), "Alpha", 0)
+	if err != nil {
+		t.Fatalf("cannot create the group: %v", err)
+	}
+	betaID, err := v.CreateGroup(alphaID, "Beta", 0)
+	if err != nil {
+		t.Fatalf("cannot create the sub group: %v", err)
+	}
+	model.reload()
+
+	dragTo(t, driver, model, "Alpha", "Beta")
+	for _, row := range model.rows {
+		if row.id == alphaID && row.parent != v.RootID() {
+			t.Fatalf("Alpha moved into its own child: its parent is %q", row.parent)
+		}
+	}
+
+	dragTo(t, driver, model, "Beta", model.t("tree.allEntries"))
+	for _, row := range model.rows {
+		if row.id == betaID {
+			if row.parent != v.RootID() {
+				t.Fatalf("Beta's parent is %q after the drop on the root row, want the root", row.parent)
+			}
+			return
+		}
+	}
+	t.Fatalf("Beta is not in the group tree: %v", rowNames(model))
+}
+
+// TestDraggingAnEntryOntoAGroupMovesIt pins that an entry dragged out of the list
+// and let go on a group row moves into that group.
+func TestDraggingAnEntryOntoAGroupMovesIt(t *testing.T) {
+	driver, model := newTestPage(t, "en")
+	create(t, model, "master")
+	v := model.vault()
+	alphaID, err := v.CreateGroup(v.RootID(), "Alpha", 0)
+	if err != nil {
+		t.Fatalf("cannot create the group: %v", err)
+	}
+	betaID, err := v.CreateGroup(v.RootID(), "Beta", 0)
+	if err != nil {
+		t.Fatalf("cannot create the group: %v", err)
+	}
+	if _, err := v.CreateEntry(alphaID, vault.EntryDTO{Title: "Mailbox"}); err != nil {
+		t.Fatalf("cannot create the entry: %v", err)
+	}
+	model.reload()
+
+	dragTo(t, driver, model, "Mailbox", "Beta")
+
+	moved, err := v.Entries(betaID, false, false)
+	if err != nil || len(moved) != 1 || moved[0].Title != "Mailbox" {
+		t.Fatalf("Beta holds %d entries (err %v), want the dragged one", len(moved), err)
+	}
+	left, err := v.Entries(alphaID, false, false)
+	if err != nil || len(left) != 0 {
+		t.Fatalf("Alpha still holds %d entries (err %v), want none", len(left), err)
 	}
 }
 
@@ -961,6 +1177,38 @@ func paintedTexts(driver *app.Driver) []string {
 	return texts
 }
 
+// paintedTextBounds is where the frame painted the words value, failing when it
+// painted them nowhere.
+func paintedTextBounds(t *testing.T, driver *app.Driver, value string) gfx.Rect {
+	t.Helper()
+	for _, text := range driver.Snapshot().Texts {
+		if text.Value == value {
+			return text.Bounds
+		}
+	}
+	t.Fatalf("the frame paints no text %q", value)
+	return gfx.Rect{}
+}
+
+// paintedTextAbove is where the frame painted the words value nearest above y, which
+// tells a list heading from a toolbar button of the same name.
+func paintedTextAbove(t *testing.T, driver *app.Driver, value string, y float32) gfx.Rect {
+	t.Helper()
+	found := gfx.Rect{Y: -1}
+	for _, text := range driver.Snapshot().Texts {
+		if text.Value != value || text.Bounds.Y >= y {
+			continue
+		}
+		if text.Bounds.Y > found.Y {
+			found = text.Bounds
+		}
+	}
+	if found.Y < 0 {
+		t.Fatalf("the frame paints no text %q above %v", value, y)
+	}
+	return found
+}
+
 // requireMasked fails unless the password is painted as one bullet per character and
 // appears nowhere in clear.
 func requireMasked(t *testing.T, driver *app.Driver, secret string) {
@@ -1283,6 +1531,43 @@ func drag(t *testing.T, driver *app.Driver, model *Model, label string, dx float
 	}
 	if err := paint(driver, model); err != nil {
 		t.Fatalf("cannot paint after dragging %q: %v", label, err)
+	}
+}
+
+// dragTo drags the control labeled from onto the middle of the one labeled to, past
+// the drag threshold in two steps and then let go, as a user moves a group or an entry.
+func dragTo(t *testing.T, driver *app.Driver, model *Model, from, to string) {
+	t.Helper()
+	dragToAt(t, driver, model, from, to, 0.5)
+}
+
+// dragToAt is dragTo at a fraction of the target's height: near the top and bottom
+// edges a tree row reorders its level instead of taking the row as a parent.
+func dragToAt(t *testing.T, driver *app.Driver, model *Model, from, to string, fraction float32) {
+	t.Helper()
+	if err := paint(driver, model); err != nil {
+		t.Fatalf("cannot paint before dragging %q: %v", from, err)
+	}
+	start := widestHitBounds(t, driver, from)
+	end := widestHitBounds(t, driver, to)
+	x, y := start.X+start.Width/2, start.Y+start.Height/2
+	tx, ty := end.X+end.Width/2, end.Y+end.Height*fraction
+	if err := driver.Press(x, y, gfx.PointerButtonPrimary); err != nil {
+		t.Fatalf("pressing %q: %v", from, err)
+	}
+	for _, step := range []float32{0.5, 1} {
+		if err := driver.Move(x+(tx-x)*step, y+(ty-y)*step); err != nil {
+			t.Fatalf("moving %q: %v", from, err)
+		}
+		if err := paint(driver, model); err != nil {
+			t.Fatalf("cannot paint while dragging %q: %v", from, err)
+		}
+	}
+	if err := driver.Release(tx, ty, gfx.PointerButtonPrimary); err != nil {
+		t.Fatalf("releasing %q: %v", from, err)
+	}
+	if err := paint(driver, model); err != nil {
+		t.Fatalf("cannot paint after dragging %q: %v", from, err)
 	}
 }
 

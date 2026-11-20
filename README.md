@@ -45,8 +45,8 @@ internal/desktop/locales/ko.json
 
 翻译的覆盖范围包括：界面全部文案、对话框与提示、错误信息（程序只返回错误码与参数，
 由界面层翻译）、日期/数字格式，以及**菜单栏**——菜单和窗口一样由 Go 页面绘制，
-切换语言后立即更新，无需重启。回收站分组也会按当前语言命名（标识仍是数据库里的
-UUID，改名不会动到任何引用它的条目）。
+切换语言后立即更新，无需重启。回收站的名字也跟随当前语言（它由“工具”菜单打开，
+不占用分组树；标识仍是数据库里的 UUID，改名不会动到任何引用它的条目）。
 
 ```powershell
 node tools/i18n-check.mjs     # 校验各语言 key 是否齐全、占位符是否一致
@@ -122,7 +122,7 @@ JSON 文档），打开非本格式的文件会直接提示「这不是 GoKeep �
   条数与总大小限制
 - 回收站：删除先进入回收站，可还原或清空；记录 DeletedObjects 供其他客户端同步
 - 搜索：快速搜索、按分组搜索、区分大小写、正则表达式、搜索受保护字段
-- 工具：重复密码检查、过期条目检查、数据库设置、选项、最近文件
+- 工具：回收站、重复密码检查、过期条目检查、数据库设置、选项、最近文件
 
 使用体验
 
@@ -185,7 +185,7 @@ go test ./...   # 全部测试
 发布后可用 GitHub CLI 验证构建来源：
 
 ```powershell
-gh attestation verify .\GoKeep-0.1.1-windows-amd64-setup.exe --repo oyzy/go-pw
+gh attestation verify .\GoKeep-0.1.2-windows-amd64-setup.exe --repo oyzy/go-pw
 ```
 
 ## 项目结构

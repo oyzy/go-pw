@@ -112,8 +112,6 @@
   },
   "status": {
     "notOpen": "데이터베이스가 열려 있지 않습니다",
-    "recycleBinOff": "휴지통이 꺼져 있습니다(삭제는 완전 삭제됩니다)",
-    "recycleBinOffHint": "여기를 클릭하면 휴지통을 사용합니다",
     "summary": "항목 {entries}개 / 그룹 {groups}개",
     "summaryFull": "항목 {entries}개 / 그룹 {groups}개 · {cipher} · {kdf} · {version} · {security}",
     "clipboard": "클립보드가 {seconds}초 후에 지워집니다"
@@ -472,8 +470,6 @@
     "find": "찾기...",
     "findAll": "모든 그룹에서 찾기",
     "refresh": "새로 고침",
-    "showRecycleBin": "휴지통 표시",
-    "hideRecycleBin": "휴지통 숨기기",
     "toggleTheme": "테마 전환",
     "generator": "비밀번호 생성기...",
     "dbSettings": "데이터베이스 설정...",

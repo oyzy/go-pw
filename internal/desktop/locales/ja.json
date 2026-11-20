@@ -112,8 +112,6 @@
   },
   "status": {
     "notOpen": "データベースが開かれていません",
-    "recycleBinOff": "ごみ箱は無効です（削除は完全削除になります）",
-    "recycleBinOffHint": "ここをクリックするとごみ箱を有効にします",
     "summary": "{entries} 項目 / {groups} グループ",
     "summaryFull": "{entries} 項目 / {groups} グループ · {cipher} · {kdf} · {version} · {security}",
     "clipboard": "クリップボードは {seconds} 秒後に消去されます"
@@ -472,8 +470,6 @@
     "find": "検索...",
     "findAll": "すべてのグループから検索",
     "refresh": "更新",
-    "showRecycleBin": "ごみ箱を表示",
-    "hideRecycleBin": "ごみ箱を隠す",
     "toggleTheme": "テーマを切り替え",
     "generator": "パスワード生成...",
     "dbSettings": "データベース設定...",

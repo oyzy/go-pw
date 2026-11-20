@@ -112,8 +112,6 @@
   },
   "status": {
     "notOpen": "尚未開啟資料庫",
-    "recycleBinOff": "資源回收筒已關閉（刪除將永久生效）",
-    "recycleBinOffHint": "點擊此處啟用資源回收筒",
     "summary": "{entries} 項目 / {groups} 群組",
     "summaryFull": "{entries} 項目 / {groups} 群組 · {cipher} · {kdf} · {version} · {security}",
     "clipboard": "剪貼簿將於 {seconds} 秒後清空"
@@ -472,8 +470,6 @@
     "find": "尋找...",
     "findAll": "在所有群組中尋找",
     "refresh": "重新整理",
-    "showRecycleBin": "顯示資源回收筒",
-    "hideRecycleBin": "隱藏資源回收筒",
     "toggleTheme": "切換佈景主題",
     "generator": "密碼產生器...",
     "dbSettings": "資料庫設定...",

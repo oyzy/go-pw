@@ -17,7 +17,7 @@ import (
 )
 
 // version is shown in the about dialog and in the title strip.
-const version = "0.1.1"
+const version = "0.1.2"
 
 func main() {
 	store, err := config.New()

@@ -23,12 +23,12 @@ import (
 // groups plus the root row that shows every entry.
 type groupRow struct {
 	id       string
+	parent   string
 	name     string
 	depth    int
 	branch   bool
 	expanded bool
 	entries  int
-	recycled bool
 }
 
 // confirmState is the question dialog: KeePass asks before deleting, emptying the
@@ -67,6 +67,12 @@ type Model struct {
 	rows      []groupRow
 	tree      ui.TreeState
 	list      ui.ListState
+	// drag moves an entry from the list onto a group row of the tree; groups
+	// drag through the tree's own CanDrop. dragAccept and dragDrop are made
+	// once here: method values made in each paint allocate.
+	drag       ui.DragState
+	dragAccept func(source, target gfx.ID) bool
+	dragDrop   func(source, target gfx.ID)
 	// splitTree and splitList are the dividers between the three panes: Pos is the width
 	// of the pane before each, kept across paints and window resizes.
 	splitTree ui.SplitterState
@@ -180,6 +186,8 @@ func newModel(sess *Session) *Model {
 	}
 	m.tree.RowHeight = 26
 	m.tree.Indent = 16
+	m.tree.CanDrop = m.canDropGroup
+	m.dragAccept, m.dragDrop = m.canDropEntry, m.dropEntry
 	m.initUpdates(version)
 	return m
 }
@@ -316,8 +324,7 @@ func (m *Model) buildRows() []groupRow {
 		entries:  all,
 	}}
 	tree := v.Tree()
-	info := v.Info()
-	showBin := m.sess.Config().Get().ShowRecycleBin
+	binID := v.Info().RecycleBinID
 	m.expanded[""] = true
 	var walk func(groups []vault.GroupDTO, depth int)
 	walk = func(groups []vault.GroupDTO, depth int) {
@@ -326,16 +333,12 @@ func (m *Model) buildRows() []groupRow {
 				walk(g.Children, depth)
 				continue
 			}
-			// The recycle bin is one of the database's groups: the interface names it
-			// in the selected language, and can leave it out altogether.
-			recycled := info.RecycleBinID != "" && g.ID == info.RecycleBinID
-			if recycled && !showBin {
+			// The recycle bin is not a group the tree shows: the menu bar opens it,
+			// so the groups of the database keep the tree to themselves.
+			if binID != "" && g.ID == binID {
 				continue
 			}
 			name := g.Name
-			if recycled {
-				name = m.t("app.recycleBin")
-			}
 			if strings.TrimSpace(name) == "" {
 				name = m.t("tree.unnamed")
 			}
@@ -347,12 +350,12 @@ func (m *Model) buildRows() []groupRow {
 			}
 			rows = append(rows, groupRow{
 				id:       g.ID,
+				parent:   g.ParentID,
 				name:     name,
 				depth:    depth,
 				branch:   branch,
 				expanded: open,
 				entries:  len(g.EntryIDs),
-				recycled: recycled,
 			})
 			if open {
 				walk(g.Children, depth+1)

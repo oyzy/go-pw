@@ -172,7 +172,7 @@ func (m *Model) cmdNewEntry() {
 		return
 	}
 	groupID := m.groupID
-	if groupID == "" {
+	if groupID == "" || m.recycleView() {
 		groupID = m.firstGroupID()
 	}
 	settings, err := v.DatabaseSettings()
@@ -210,7 +210,7 @@ func (m *Model) firstGroupID() string {
 // cmdNewGroup opens the editor for a new group.
 func (m *Model) cmdNewGroup() {
 	parent := m.groupID
-	if parent == "" {
+	if parent == "" || m.recycleView() {
 		if v := m.vault(); v != nil {
 			parent = v.RootID()
 		}

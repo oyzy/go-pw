@@ -112,8 +112,6 @@
   },
   "status": {
     "notOpen": "No database open",
-    "recycleBinOff": "Recycle bin is off (deletions are permanent)",
-    "recycleBinOffHint": "Click here to enable the recycle bin",
     "summary": "{entries} entries / {groups} groups",
     "summaryFull": "{entries} entries / {groups} groups · {cipher} · {kdf} · {version} · {security}",
     "clipboard": "Clipboard will be cleared in {seconds}s"
@@ -472,8 +470,6 @@
     "find": "Find...",
     "findAll": "Find in all groups",
     "refresh": "Refresh",
-    "showRecycleBin": "Show Recycle Bin",
-    "hideRecycleBin": "Hide Recycle Bin",
     "toggleTheme": "Toggle Theme",
     "generator": "Password Generator...",
     "dbSettings": "Database Settings...",

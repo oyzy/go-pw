@@ -36,7 +36,11 @@ Things that only this project has, which are easy to get wrong:
   row closures (`treeName`, `treeContent`, `listContent`, made once in `newModel`).
 - **`ui.ContextMenu(c, target, ...)` needs a target with an identity**: a control, a
   container with `Hit`, or a `LabelFor` element. A plain `ui.Text` is not one, which is why
-  `treeRow` gives its label `.Hit(ui.ID(c), name)`.
+  `treeRow` gives its label `.LabelFor(m.tree.RowID(index))`: a `Hit` of its own would take
+  the clicks that choose the row.
+- **Moving rows happens after the paint that reports it.** A group's drop comes from
+  `TreeState.Dropped`, read just after `ui.Tree`, and runs in `c.After`; an entry dragged
+  from the list drops on a tree row through `ui.DragState`, declared on the row's content.
 - **`MenuItem.Keys` only prints the shortcut.** The action is declared separately in
   `shortcuts`, once per paint. The help dialog's list is built from `shortcutRows`, so keep
   the two in step.
@@ -57,8 +61,8 @@ by another application never reaches the parser. Behaviour the user asked for an
 must not regress:
 
 - a new database has no default group (only the root line, which is not a group);
-- deleting an entry or a group moves it to the recycle bin, which shows as **回收站** and can
-  be hidden with `ShowRecycleBin`; `Shift+Delete` deletes for good;
+- deleting an entry or a group moves it to the recycle bin, which the tools menu opens as
+  **回收站** rather than showing it as a row of the group tree; `Shift+Delete` deletes for good;
 - a wrong password is a localised sentence, never `[object Object]`;
 - switching the theme and switching back works, and the title bar follows the theme;
 - the Help menu holds no KeePass links.

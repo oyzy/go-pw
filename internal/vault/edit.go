@@ -611,7 +611,7 @@ func (v *Vault) MoveGroup(id, parentID string) error {
 	if group.UUID == v.db.Root.UUID {
 		return errors.New("vault: the root group cannot be moved")
 	}
-	if group.UUID == target.UUID || target.FindGroup(group.UUID) != nil {
+	if group.UUID == target.UUID || group.FindGroup(target.UUID) != nil {
 		return errors.New("vault: a group cannot be moved into itself")
 	}
 	current := v.db.ParentGroup(group.UUID)
@@ -631,6 +631,81 @@ func (v *Vault) MoveGroup(id, parentID string) error {
 	group.Times.Touch()
 	target.Groups = append(target.Groups, group)
 	target.Times.Touch()
+	v.touch()
+	return nil
+}
+
+// MoveGroupBeside moves a group next to another group, before or after it: a drop
+// between two rows reorders that level, and a drop beside a row of another level
+// moves the group into that row's parent. It never makes a cycle, and the recycle
+// bin takes nothing.
+func (v *Vault) MoveGroupBeside(id, siblingID string, after bool) error {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	if v.db == nil {
+		return ErrLocked
+	}
+	group, err := v.findGroupLocked(id)
+	if err != nil {
+		return err
+	}
+	sibling, err := v.findGroupLocked(siblingID)
+	if err != nil {
+		return err
+	}
+	if group.UUID == v.db.Root.UUID {
+		return errors.New("vault: the root group cannot be moved")
+	}
+	if sibling.UUID == v.db.Root.UUID {
+		return errors.New("vault: the root group has no siblings")
+	}
+	if group.UUID == sibling.UUID {
+		return nil
+	}
+	parent := v.db.ParentGroup(sibling.UUID)
+	if parent == nil {
+		return errors.New("vault: the group has no parent")
+	}
+	if group.UUID == parent.UUID || group.FindGroup(parent.UUID) != nil {
+		return errors.New("vault: a group cannot be moved into itself")
+	}
+	if isInRecycleBin(v.db, parent) {
+		return errors.New("vault: groups cannot be moved into the recycle bin")
+	}
+	current := v.db.ParentGroup(group.UUID)
+	if current == nil {
+		return errors.New("vault: the group has no parent")
+	}
+	at := -1
+	for i, g := range parent.Groups {
+		if g.UUID == sibling.UUID {
+			at = i
+			if after {
+				at++
+			}
+			break
+		}
+	}
+	if at < 0 {
+		return errors.New("vault: the sibling group has no parent")
+	}
+	if current.UUID == parent.UUID {
+		for i, g := range current.Groups {
+			if g.UUID == group.UUID && i < at {
+				at--
+				break
+			}
+		}
+	}
+	removeGroup(current, group)
+	current.Times.Touch()
+	parent.Groups = append(parent.Groups, nil)
+	copy(parent.Groups[at+1:], parent.Groups[at:])
+	parent.Groups[at] = group
+	group.PreviousParentGroup = current.UUID
+	group.Times.LocationChanged = now()
+	group.Times.Touch()
+	parent.Times.Touch()
 	v.touch()
 	return nil
 }

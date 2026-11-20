@@ -25,7 +25,6 @@ type Config struct {
 	BackupCount           int           `json:"backupCount"`
 	ConfirmDelete         bool          `json:"confirmDelete"`
 	ShowPasswordsInList   bool          `json:"showPasswordsInList"`
-	ShowRecycleBin        bool          `json:"showRecycleBin"`
 	AutoCheckUpdates      bool          `json:"autoCheckUpdates"`
 	Theme                 string        `json:"theme"`
 	Language              string        `json:"language"`
@@ -43,7 +42,6 @@ func DefaultConfig() Config {
 		ClipboardClearOnExit:  true,
 		BackupCount:           1,
 		ConfirmDelete:         true,
-		ShowRecycleBin:        true,
 		AutoCheckUpdates:      true,
 		Theme:                 "dark",
 		MaxRecentFiles:        10,
