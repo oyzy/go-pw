@@ -1,7 +1,7 @@
 [app]
 name = "GoKeep"
 id = "dev.gokeep.app"
-version = "0.1.1"
+version = "0.1.2"
 executable = "GoKeep"
 package = "."
 # 1024x1024 PNG: viva build turns it into the .exe icon and the window icon.
