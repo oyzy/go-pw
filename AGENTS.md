@@ -41,6 +41,11 @@ Things that only this project has, which are easy to get wrong:
 - **Moving rows happens after the paint that reports it.** A group's drop comes from
   `TreeState.Dropped`, read just after `ui.Tree`, and runs in `c.After`; an entry dragged
   from the list drops on a tree row through `ui.DragState`, declared on the row's content.
+- **Windows updates install through a scheduled task, not a child process.** The
+  application runs in a Windows job object, and a helper started as its child is
+  terminated when it exits. `update_install_windows.go` registers a one-time
+  `schtasks` task that waits for the process, runs the NSIS installer silently and
+  starts the new version through Explorer.
 - **`MenuItem.Keys` only prints the shortcut.** The action is declared separately in
   `shortcuts`, once per paint. The help dialog's list is built from `shortcutRows`, so keep
   the two in step.

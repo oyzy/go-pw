@@ -91,7 +91,7 @@ type updateState struct {
 // feeds in the release workflow.
 func (m *Model) initUpdates(version string) {
 	m.update.supported = selfUpdatable()
-	m.update.installer = update.Install
+	m.update.installer = installUpdate
 	if m.update.supported {
 		client, err := newUpdateClient(version)
 		if err != nil {
@@ -454,6 +454,15 @@ func (m *Model) installUpdate() {
 		if m.application != nil {
 			m.application.Quit()
 		}
+		// The installer helper waits for this process before it replaces the
+		// program. A window that has closed but a process that lingers would
+		// leave the installer waiting; after a short grace period the process
+		// exits even if the event loop did not.
+		go func() {
+			time.Sleep(6 * time.Second)
+			slog.Warn("the update waited for the application to quit; exiting")
+			os.Exit(0)
+		}()
 	})
 	if err != nil {
 		slog.Error("installing the update failed", "error", err)
