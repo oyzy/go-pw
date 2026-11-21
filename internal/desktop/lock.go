@@ -25,7 +25,9 @@ var presetNames = []string{presetStandard, presetStrong, presetParanoid, presetF
 // lockPage is the window's content while no database is open: the card that unlocks
 // an existing file, or the one that creates a new one.
 func (m *Model) lockPage(c ui.C) {
-	ui.Row(c).Fill().Items(ui.Center).Justify(ui.Center).Children(func() {
+	// The lock screen has no title bar, so the background around the card is what
+	// moves the window; the card's own surface and controls still take their presses.
+	ui.Row(c).Fill().Items(ui.Center).Justify(ui.Center).MovesWindow().Children(func() {
 		ui.Column(c).Width(520).Gap(12).Pad(20).
 			Background(m.theme.Card).Radius(12).Border(1, m.theme.Border).Children(func() {
 			ui.Text(c, appTitle).FontSize(20).Bold()

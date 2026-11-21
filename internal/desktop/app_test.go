@@ -1482,6 +1482,35 @@ func TestTheGitHubButtonOpensTheRepository(t *testing.T) {
 	}
 }
 
+// TestTheWindowIsMovedFromTheLockScreenAndTheTitleStrip pins the move regions of the
+// custom-titlebar window. The lock screen used to declare none, so a window that asked
+// for a password could not be dragged at all; the title strip is the other place a press
+// and drag moves the window.
+func TestTheWindowIsMovedFromTheLockScreenAndTheTitleStrip(t *testing.T) {
+	driver, model := newTestPage(t, "en")
+	if err := paint(driver, model); err != nil {
+		t.Fatalf("cannot paint the lock screen: %v", err)
+	}
+	snapshot := driver.Snapshot()
+	for _, point := range [][2]float32{{20, 8}, {300, 30}, {20, float32(snapshot.Height) - 20}} {
+		if got := driver.PressAt(point[0], point[1]); got != app.PressMove {
+			t.Errorf("the lock screen at (%v,%v) answers %v, want a window move", point[0], point[1], got)
+		}
+	}
+	create(t, model, "master")
+	if err := paint(driver, model); err != nil {
+		t.Fatalf("cannot paint the workspace: %v", err)
+	}
+	if got := driver.PressAt(20, 8); got != app.PressMove {
+		t.Errorf("the title strip answers %v, want a window move", got)
+	}
+	// A control declared on the strip keeps its own press instead of moving the window.
+	bounds := widestHitBounds(t, driver, model.t("titlebar.github"))
+	if got := driver.PressAt(bounds.X+bounds.Width/2, bounds.Y+bounds.Height/2); got != app.PressControl {
+		t.Errorf("the GitHub button answers %v, want the button's own press", got)
+	}
+}
+
 // TestTheDividersResizeThePanes covers the two dividers between the three panes: a drag
 // moves the divider, the pane beside it takes the new width, and the divider stops at the
 // least width instead of letting a pane vanish. The list and the details used to take

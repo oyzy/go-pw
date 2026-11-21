@@ -185,7 +185,7 @@ go test ./...   # 全部测试
 发布后可用 GitHub CLI 验证构建来源：
 
 ```powershell
-gh attestation verify .\GoKeep-0.1.3-windows-amd64-setup.exe --repo oyzy/go-pw
+gh attestation verify .\GoKeep-0.1.4-windows-amd64-setup.exe --repo oyzy/go-pw
 ```
 
 ## 项目结构
